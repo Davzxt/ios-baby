@@ -32,7 +32,9 @@ cp -R "$HERE/compat/." mesa/include/   # sys/sysmacros.h, linux/const.h, linux/t
 mkdir -p drm-standin pc
 # iOS libdrm: link stand-in only; the srv winsys will talk to the XNU GE8100 user client
 # libdrm over the A01CoreGPU IOKit service; IOKit headers are not in the iOS SDK (S7 copies)
-$CC_IOS -O2 -dynamiclib -install_name @rpath/libdrm.2.dylib -I libdrm -I libdrm/include/drm \n  -I "$HERE/../hakios-gl/include" -o drm-standin/libdrm.2.dylib "$HERE/a01drm.c" \n  -framework IOKit -framework CoreFoundation
+$CC_IOS -O2 -dynamiclib -install_name @rpath/libdrm.2.dylib -I libdrm -I libdrm/include/drm \
+  -I "$HERE/../hakios-gl/include" -o drm-standin/libdrm.2.dylib "$HERE/a01drm.c" \
+  -framework IOKit -framework CoreFoundation
 ln -sf libdrm.2.dylib drm-standin/libdrm.dylib
 cat > pc/libdrm.pc <<PC
 Name: libdrm
