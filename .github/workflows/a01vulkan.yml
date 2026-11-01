@@ -7,8 +7,8 @@ on:
   push:
     branches: [a01core]
     paths:
-      - "gpu/a01vulkan/**
-      - "gpu/mesa/patch-mesa.py""
+      - "gpu/a01vulkan/**"
+      - "gpu/mesa/patch-mesa.py"
       - ".github/workflows/a01vulkan.yml"
 
 jobs:
