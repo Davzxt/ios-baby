@@ -103,3 +103,8 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 - **GPU passo 1 (0311):** liga MFG/MFG_CORE0 (sequencia do clk-mt6739-pg.c), libera a protecao de
   barramento e le RGX_CR_CORE_ID__PBVNC; espera 22.49.21.16. So com a01gpu=1. Nao testado.
 - CI: ccache no workflow xnu (MakeInc.def CCACHE); 1o build com cache parcial: 14 min.
+
+## 2026-11-01: 1 GiB RAM boots
+
+- Patch 0313 (hole pages kept in vm_pages[], never freed) fixed the vm_resident.c:2627 panic. CI run 41342420423; packages AP_IOS16_BOOT_1GB_RAM*.tar.md5.
+- User report: iOS 16 boots normally with 1023 MiB, feels faster. GPU BVNC line not yet read (scrolled too fast; next try: film the screen).
