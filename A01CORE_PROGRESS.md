@@ -114,3 +114,4 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 - Metal research: docs/a01core-metal-research.md.
 - 0316: NMI dump of the MIPS state after a failed boot (prints errEPC/cause/badvaddr, holds 15 s).
 - gpu/a01metal: Metal layer on Vulkan (device, buffers, queue, command buffers, blit; pipelines pending metal2vulkan). Compiles for iOS in CI run 41350545878; not run on the phone (no Vulkan driver yet).
+- 0316 NMI on device: cause 0x80000008 (TLBL, BD) bad/EPC 0xc001662c (microMIPS): bootloader ran and jumped into main code, first heap fetch missed. errEPC 0x9fc02241 (exception code page). PT was at PA 0x834fa000, not 32 KiB-aligned (DDK ui32BaseAlign 15). 0317 aligns it.
