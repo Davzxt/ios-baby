@@ -56,3 +56,13 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 - **Aparelho do usuario recuperado (01/11/2026, 11:28):** tee1 e super stock regravados e
   conferidos por leitura de volta; depois de tirar a bateria o aparelho saiu do BROM, o LK
   enumerou como Samsung 04E8:685D e o usuario confirmou que ligou.
+
+## 2026-11-01 (noite): primeiro teste no aparelho
+
+- Sondas de 64 bits (gzip @0x40080000, raw, @0x40008000): **nada na tela** (relato do usuario).
+  O teste antigo do usuario que desenha e um zImage ARM32 com codigo anexado (bootopt 32S1).
+- LK stock (A013MUBS3AWC1), desmontado: kernel de 64 bits so com endereco alinhado em 512 KiB
+  e comprimido (descomprime ate 0x3200000 bytes), depois `lk_jump64(entrada, dtb, 0, 1)` ->
+  SMC `0x82000115` (r1 entrada, r2 dtb, r3 0, r4 1). Kernels de 32 bits passam pela mesma SMC
+  com r4 = 0. Logo, `--raw` e `--kernel-addr 0x40008000` nunca podiam funcionar.
+- Shim: acha a tela so pelo DISP_OVL0 se o FDT falhar; sem tela, reinicia na hora (sinal).
