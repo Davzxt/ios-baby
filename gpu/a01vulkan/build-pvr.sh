@@ -7,7 +7,7 @@ WORK=$(mkdir -p "$1" && cd "$1" && pwd)
 OUT=$(mkdir -p "$2" && cd "$2" && pwd)
 HERE=$(cd "$(dirname "$0")" && pwd)
 MESA=$HERE/../mesa
-MESA_TAG=${MESA_TAG:-mesa-25.0.7}
+MESA_TAG=${MESA_TAG:-mesa-26.2.3}
 LIBDRM_TAG=${LIBDRM_TAG:-libdrm-2.4.124}
 MIN_IOS=16.0
 SDK=$(xcrun --sdk iphoneos --show-sdk-path)
@@ -16,7 +16,8 @@ CC_IOS="xcrun --sdk iphoneos clang -arch arm64 -miphoneos-version-min=$MIN_IOS -
 cd "$WORK"
 [ -d mesa ] || git clone -q --depth 1 --branch "$MESA_TAG" https://gitlab.freedesktop.org/mesa/mesa.git mesa
 [ -d libdrm ] || git clone -q --depth 1 --branch "$LIBDRM_TAG" https://gitlab.freedesktop.org/mesa/drm.git libdrm
-python3 "$MESA/patch-mesa.py" mesa
+python3 "$MESA/patch-mesa.py" mesa || echo "patch-mesa.py: some S7 patches did not apply to $MESA_TAG"
+python3 "$HERE/patch-ge8100.py" mesa
 
 # libdrm: only headers and link symbols are needed here (the A01 kernel interface is the
 # pvr "srv" winsys, which talks to the GE8100 driver directly, not through DRM).
@@ -59,7 +60,7 @@ X
 
 cd mesa
 [ -d build ] || meson setup build --cross-file ../ios-cross.txt --buildtype=release -Dprefix=/ \
-  -Dvulkan-drivers=imagination-experimental -Dimagination-srv=true -Dgallium-drivers= \
+  -Dvulkan-drivers=imagination -Dimagination-srv=true -Dgallium-drivers= \
   -Dllvm=disabled -Dglx=disabled -Degl=disabled -Dgbm=disabled -Dplatforms= -Dopengl=false \
   -Dgles1=disabled -Dgles2=disabled -Dshader-cache=disabled -Dvalgrind=disabled \
   -Dlibunwind=disabled -Dzstd=disabled -Dxmlconfig=disabled -Dbuild-tests=false \
