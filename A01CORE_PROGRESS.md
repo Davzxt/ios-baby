@@ -70,3 +70,17 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
   painel **720x1480**, LK desenha em **0x76740000** (L0, pitch 2944; L3 0x76b79000 pitch 2880),
   23 reservas. A janela antiga do XNU (0x60000000+1G) bate em 0x76000000: nova janela
   0x80000000+511 MiB. Patch `0306` e shim/ADT com os valores medidos.
+
+## 2026-11-01 (noite): sistema iOS, drivers 0307-0308, auditoria
+
+- Repositorio privado `Davzxt/ios-baby-root`: `ios-root` (macos-15-intel; macos-14 cancela na hora)
+  montou o volume HFSX de 20480 MiB do iOS 16.7.16 (D22AP), release `ios-root-16.7.16-41324299453`.
+  No PC: SHA256 ok, sparse 11,6 GB, LZ4 7,08 GB, `AP_IOS16_USERDATA.tar.md5` (fora do git).
+- Boot do kernel A01CORE no aparelho (relato do usuario): drivers sobem, para em "mount root"
+  (esperado: userdata ainda era Android).
+- `0307`: bateria pela tensao do PMIC (AUXADC BATSNS), carregador (TOPSTATUS bit 2), vibracao
+  (LDO VIBR), SweetBattery ligado no A01 Core, pwrap com trava compartilhada com os botoes.
+- `0308`: mestre I2C do MT6739 (v1, FIFO) e barramento GPIO do acelerometro; fuel gauge S2MU005
+  (i2c1 0x3b) alimenta o SweetBattery; identidades do AW8896 (i2c4 0x34) e LIS2DS (gpio 0x1d).
+  CI: kernel 0300-0308 compilado (run 41328651620). Nao testado no aparelho.
+- Auditoria `docs/A01CORE_DRIVER_AUDIT.md`: evidencias da `vendor` stock e do REA.
