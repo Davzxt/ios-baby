@@ -29,6 +29,8 @@
 #define WDT_MODE        0x00U
 #define WDT_MODE_EN     0x1U
 #define WDT_MODE_KEY    0x22000000U
+#define WDT_SWRST       0x14U
+#define WDT_SWRST_KEY   0x1209U        /* Linux mtk_wdt.c */
 
 #define OVL0_PA         0x1400a000UL   /* DISP_OVL0 (Linux mtk_disp_ovl.c) */
 #define OVL_SRC_CON     0x2cU
@@ -117,6 +119,8 @@ static uintptr_t log_text = LOG_PA + LOG_TEXT_OFF;
 
 static void put_px(unsigned x, unsigned y, uint32_t rgb)
 {
+    if (!fb_base)
+        return;
     uintptr_t row = fb_base + (uintptr_t)y * fb_stride;
     if (fb_bpp == 16) {
         uint16_t v = (uint16_t)(((rgb >> 8) & 0xf800) | ((rgb >> 5) & 0x07e0) | ((rgb >> 3) & 0x1f));
@@ -409,6 +413,25 @@ static void find_framebuffer(void)
             break;
         }
     }
+    if (fb_layer >= 0)
+        return;
+    /* No (usable) framebuffer in the FDT: take what OVL0 scans out, if it looks like a
+     * 720-pixel-wide buffer in DRAM. */
+    for (unsigned n = 0; n < 4; n++) {
+        if (!(src & (1U << n)))
+            continue;
+        uint64_t addr = mmio_rd(OVL0_PA + OVL_ADDR(n));
+        uint32_t pitch = mmio_rd(OVL0_PA + OVL_PITCH(n)) & 0xffffU;
+        uint32_t fmt = (mmio_rd(OVL0_PA + OVL_CON(n)) >> 12) & 0xfU;
+        if (addr >= 0x40000000ULL && addr + (uint64_t)pitch * FB_H <= 0xc0000000ULL &&
+            pitch >= FB_W * 2U && pitch <= FB_W * 4U + 512U) {
+            fb_base = (uintptr_t)addr;
+            fb_stride = pitch;
+            fb_bpp = fmt == 0 ? 16 : 32;
+            fb_layer = (int)n;
+            return;
+        }
+    }
 }
 
 static void report_framebuffer(void)
@@ -607,6 +630,16 @@ uintptr_t a01_main(uintptr_t fdt, uint64_t entry_el, uint64_t sctlr)
 
     int fdt_ok = fdt_scan(fdt);
     find_framebuffer();
+#ifndef A01_HOST_TEST
+    if (!fb_base) {
+        /* Nothing to draw on: reboot at once, so "reboots right after the warning
+         * screen" tells that this 64-bit code ran (and "stays on the warning" that it
+         * did not). */
+        mmio_wr(TOPRGU_PA + WDT_SWRST, WDT_SWRST_KEY);
+        for (;;)
+            __asm__ volatile ("wfi");
+    }
+#endif
     slots[5] = fb_base;
     slots[6] = fb_stride;
 
