@@ -41,7 +41,7 @@ ar = ['xcrun', '--sdk', 'iphoneos', 'ar']
 strip = ['xcrun', '--sdk', 'iphoneos', 'strip']
 pkg-config = 'pkg-config'
 [built-in options]
-c_args = ['-miphoneos-version-min=$MIN_IOS', '-isysroot', '$SDK']
+c_args = ['-miphoneos-version-min=$MIN_IOS', '-isysroot', '$SDK', '-I$WORK/libdrm', '-I$WORK/libdrm/include/drm']
 cpp_args = ['-miphoneos-version-min=$MIN_IOS', '-isysroot', '$SDK']
 c_link_args = ['-miphoneos-version-min=$MIN_IOS', '-isysroot', '$SDK']
 cpp_link_args = ['-miphoneos-version-min=$MIN_IOS', '-isysroot', '$SDK']
