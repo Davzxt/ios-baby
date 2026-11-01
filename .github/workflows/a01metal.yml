@@ -1,0 +1,25 @@
+name: a01metal
+
+# A01Metal: our Metal layer on Vulkan for the Galaxy A01 Core (gpu/a01metal). Nothing of Apple's is
+# shipped; the iOS SDK is only used to compile.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [a01core]
+    paths:
+      - "gpu/a01metal/**"
+      - ".github/workflows/a01metal.yml"
+
+jobs:
+  build:
+    runs-on: macos-15-intel
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: bash gpu/a01metal/build-a01metal.sh out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: a01metal
+          path: out/
