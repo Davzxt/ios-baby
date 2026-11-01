@@ -1,0 +1,164 @@
+From d53cd75bf26872d5bfba864a3c9658329b89fce0 Mon Sep 17 00:00:00 2001
+From: a01core <a01core@localhost>
+Date: Sun, 1 Nov 2026 18:48:16 -0300
+Subject: [PATCH] 0318 a01core: GE8100 firmware init structures (RGXFWIF_INIT,
+ KCCB/FWCCB) and a health-check ping
+
+---
+ bsd/dev/a01core_gpu.c | 123 +++++++++++++++++++++++++++++++++++++++---
+ 1 file changed, 115 insertions(+), 8 deletions(-)
+
+diff --git a/bsd/dev/a01core_gpu.c b/bsd/dev/a01core_gpu.c
+index 111713f..b32e444 100644
+--- a/bsd/dev/a01core_gpu.c
++++ b/bsd/dev/a01core_gpu.c
+@@ -155,7 +155,16 @@ struct fw_sect { uint32_t id, type, base, max, alloc, off; };
+ #define FW_CODE_OFF  0x00000u     /* code allocation (type 1) */
+ #define FW_DATA_OFF  0x20000u     /* data allocation (type 2) */
+ #define FW_PT_OFF    0x28000u     /* MIPS page table, 32 KiB (rgx_mips.h LOG2_PAGETABLE_PAGE_SIZE 15) */
+-#define FW_TOTAL     0x30000u
++#define FW_POOL_OFF  0x30000u     /* host structures (KCCB, FWCCB, trace, ...), FW heap +0x100000 */
++#define FW_CFG_OFF   0x50000u     /* config heap: RGXFWIF_INIT, FW heap +0x1FF0000 */
++#define FW_FAULT_OFF 0x60000u     /* sFaultPhysAddr page */
++#define FW_TOTAL     0x70000u
++#define FW_POOL_HEAP 0x00100000u
++#define FW_CFG_HEAP  0x01FF0000u  /* RGX_FIRMWARE_RAW_HEAP_SIZE 32 MiB - CONFIG_HEAP_SIZE 64 KiB */
++#define KCCB_N       128u         /* RGXFWIF_KCCB_NUMCMDS_LOG2_DEFAULT 7 */
++#define FWCCB_N      32u          /* RGXFWIF_FWCCB_NUMCMDS_LOG2 5 */
++#define FW_CORE_HZ   570000000u   /* GE8100 on MT6739: 570 MHz */
++#define FW_APM_MS    60000u       /* active power management latency: keep it on during the test */
+ 
+ static void
+ wr64(vm_offset_t b, uint32_t o, uint64_t v)
+@@ -259,6 +268,75 @@ gpu_fw_boot(vm_offset_t rgx)
+ 		pt[((data_base - MIPS_HEAP_VA) >> 12) + i] =
+ 		    (uint32_t)(((data_pa >> 12) + i) << PTE_PFN_SHIFT) | PTE_UNCACHED | PTE_DVG;
+ 	}
++	/*
++	 * Host-side firmware structures, as rgxfwutils.c RGXSetupFirmware builds them. Offsets and
++	 * sizes come from compiling the DDK's own rgx_fwif_km.h (RGXFWIF_INIT 0x250 bytes, CCB_CTL
++	 * 0x10, KCCB_CMD 0x38, FWCCB_CMD 0x28, ...). MIPS firmware addresses are the low 32 bits of
++	 * the GPU address: FW heap 0xE1C0000000 -> 0xC0000000 (RGXSetFirmwareAddress).
++	 * RGXFWIF_INIT sits at the start of the config heap, the last 64 KiB of the 32 MiB FW heap
++	 * (the firmware read its eFirmwarePerf field, +0x168, at 0xC1FF0168).
++	 */
++	for (uint32_t i = 0; i < (FW_CFG_OFF - FW_POOL_OFF) / 4096; i++) {
++		pt[(FW_POOL_HEAP >> 12) + i] = (uint32_t)((((pa + FW_POOL_OFF) >> 12) + i) << PTE_PFN_SHIFT) | PTE_UNCACHED | PTE_DVG;
++	}
++	for (uint32_t i = 0; i < (FW_FAULT_OFF - FW_CFG_OFF) / 4096; i++) {
++		pt[(FW_CFG_HEAP >> 12) + i] = (uint32_t)((((pa + FW_CFG_OFF) >> 12) + i) << PTE_PFN_SHIFT) | PTE_UNCACHED | PTE_DVG;
++	}
++	uint8_t *pool_h = (uint8_t *)(va + FW_POOL_OFF);
++	uint8_t *ini = (uint8_t *)(va + FW_CFG_OFF);
++	uint32_t pool = 0;
++#define FWALLOC(sz) ({ uint32_t _o = pool; pool = (pool + (uint32_t)(sz) + 63u) & ~63u; _o; })
++#define PFW(p)      (MIPS_HEAP_VA + FW_POOL_HEAP + (uint32_t)(p))
++#define P32(p, o, v) (*(uint32_t *)(pool_h + (p) + (o)) = (uint32_t)(v))
++#define I32(o, v)   (*(uint32_t *)(ini + (o)) = (uint32_t)(v))
++#define I64(o, v)   (*(uint64_t *)(ini + (o)) = (uint64_t)(v))
++	uint32_t p_kcc = FWALLOC(0x10), p_kccb = FWALLOC(KCCB_N * 0x38);
++	uint32_t p_fcc = FWALLOC(0x10), p_fccb = FWALLOC(FWCCB_N * 0x28);
++	uint32_t p_trace = FWALLOC(0x1038), p_hwr = FWALLOC(0x818), p_util = FWALLOC(0x2838);
++	uint32_t p_rt = FWALLOC(0x18), p_os = FWALLOC(0x14), p_pow = FWALLOC(8);
++	uint32_t p_hwpc = FWALLOC(0x1200), p_reg = FWALLOC(0x3008), p_clk = FWALLOC(4);
++	if (pool > FW_CFG_OFF - FW_POOL_OFF) {
++		printf("A01CORE GPU FW: structure pool overflow (%#x)\n", pool);
++		return;
++	}
++	/* RGXSetupCCB: WrapMask = entries - 1, CmdSize */
++	P32(p_kcc, 0x8, KCCB_N - 1);
++	P32(p_kcc, 0xc, 0x38);
++	P32(p_fcc, 0x8, FWCCB_N - 1);
++	P32(p_fcc, 0xc, 0x28);
++	/* RGXFWIF_RUNTIME_CFG: APM latency, core clock, dusts (1 cluster -> 1 dust) */
++	P32(p_rt, 0x0, FW_APM_MS);
++	P32(p_rt, 0xc, FW_CORE_HZ);
++	P32(p_rt, 0x10, 1);
++	P32(p_clk, 0x0, FW_CORE_HZ);
++	/* RGXFWIF_OS_CONFIG (RGXSetupOSConfig): flags 0, power sync, trace and HWR buffers */
++	P32(p_os, 0x8, PFW(p_pow));
++	P32(p_os, 0xc, PFW(p_trace));
++	P32(p_os, 0x10, PFW(p_hwr));
++	/* RGXFWIF_INIT; trace buffer log type 0 (RGXFWIF_LOG_TYPE_NONE), HWPerf filter 0 */
++	I32(0x000, PFW(p_os));
++	I64(0x008, pa + FW_FAULT_OFF);                   /* sFaultPhysAddr */
++	I64(0x010, 0xA800000000ull);                     /* sPDSExecBase (BRN 65273 heap) */
++	I64(0x018, 0xBA00000000ull);                     /* sUSCExecBase (BRN 65273 heap) */
++	I32(0x024, PFW(p_kcc));
++	I32(0x028, PFW(p_kccb));
++	I32(0x02c, PFW(p_fcc));
++	I32(0x030, PFW(p_fccb));
++	I32(0x060, 1);                                   /* ui32HWRDebugDumpLimit */
++	I32(0x0c8, PFW(p_rt));
++	I32(0x0cc, PFW(p_trace));
++	I32(0x0e0, PFW(p_hwr));
++	I32(0x0e4, PFW(p_util));
++	I32(0x0e8, PFW(p_reg));
++	I32(0x0ec, PFW(p_hwpc));
++	I32(0x0fc, FW_CORE_HZ);                          /* ui32InitialCoreClockSpeed */
++	I32(0x100, FW_APM_MS);                           /* ui32ActivePMLatencyms */
++	I32(0x208, PFW(p_clk));                          /* sCoreClockRate */
++#undef FWALLOC
++#undef P32
++#undef I32
++#undef I64
++
+ 	flush_dcache(va, FW_TOTAL, FALSE);
+ 
+ 	/* RGXStart, MIPS path */
+@@ -282,16 +360,45 @@ gpu_fw_boot(vm_offset_t rgx)
+ 	wr64(rgx, RGX_CR_SOFT_RESET, 0);          /* releases the MIPS: it starts at 0xBFC00000 */
+ 	(void)rd64(rgx, RGX_CR_SOFT_RESET);
+ 
++	/* From here on the MIPS writes these structures: access them only uncached. */
++	vm_offset_t u = ml_io_map(pa, FW_TOTAL);
++	volatile uint32_t *started = (volatile uint32_t *)(u + FW_CFG_OFF + 0x104);   /* bFirmwareStarted */
+ 	uint32_t stage = 0;
+-	for (unsigned t = 0; t < 200; t++) {           /* up to 2 s */
++	for (unsigned t = 0; t < 200 && !*started; t++) {   /* up to 2 s */
+ 		delay(10000);
+-		flush_dcache(va + bdata_off, 4096, FALSE);
+-		stage = *(volatile uint32_t *)(va + bdata_off + BOOT_STAGE_OFF);
+-		if (stage) break;
+ 	}
+-	printf("A01CORE GPU FW: loaded %llu bytes at %#llx; boot stage %#x, mips exc %#llx irq %#llx%s\n",
+-	    len, pa, stage, rd64(rgx, RGX_CR_MIPS_EXCEPTION_STATUS), rd64(rgx, RGX_CR_MIPS_WRAPPER_IRQ_STA),
+-	    stage ? " -> FIRMWARE RUNNING" : " -> firmware did not report");
++	printf("A01CORE GPU FW: loaded %llu bytes at %#llx; started %u, mips exc %#llx irq %#llx%s\n",
++	    len, pa, *started, rd64(rgx, RGX_CR_MIPS_EXCEPTION_STATUS), rd64(rgx, RGX_CR_MIPS_WRAPPER_IRQ_STA),
++	    *started ? " -> FIRMWARE RUNNING" : " -> firmware did not start");
++	if (*started) {
++		/* RGXSendCommandRaw + RGXScheduleCommand: one HEALTH_CHECK into the kernel CCB, then
++		 * kick the MTS for the GP data master (TASK_COUNTED). The firmware answers by moving
++		 * the CCB read offset up to the write offset. */
++		volatile uint32_t *kcc = (volatile uint32_t *)(u + FW_POOL_OFF + p_kcc);
++		uint32_t w = kcc[0];
++		volatile uint32_t *cmd = (volatile uint32_t *)(u + FW_POOL_OFF + p_kccb + w * 0x38);
++		for (unsigned i = 0; i < 0x38 / 4; i++) {
++			cmd[i] = 0;
++		}
++		cmd[0] = 0x2ABC0073;                             /* RGXFWIF_KCCB_CMD_HEALTH_CHECK */
++		__asm__ volatile ("dsb sy" ::: "memory");
++		kcc[0] = (w + 1) & (KCCB_N - 1);
++		__asm__ volatile ("dsb sy" ::: "memory");
++		*(volatile uint32_t *)(rgx + 0x0B00) = 0x10;     /* RGX_CR_MTS_SCHEDULE: DM_GP | TASK_COUNTED */
++		__asm__ volatile ("dsb sy" ::: "memory");
++		unsigned t;
++		for (t = 0; t < 1000 && kcc[1] != kcc[0]; t++) {   /* up to 1 s */
++			delay(1000);
++		}
++		stage = (kcc[1] == kcc[0]);
++		printf("A01CORE GPU FW: PING (health check) %s: kccb write %u read %u after %u ms, fwccb write %u\n",
++		    stage ? "ANSWERED" : "NO ANSWER", kcc[0], kcc[1], t,
++		    *(volatile uint32_t *)(u + FW_POOL_OFF + p_fcc));
++		if (stage) {
++			printf("A01CORE GPU FW: the GE8100 firmware runs and answers commands. Holding the screen 15 s.\n");
++			delay(15 * 1000 * 1000);
++		}
++	}
+ 	if (!stage) {
+ 		/* rgxdebug.c _RGXMipsExtraDebug: NMI the MIPS and let its handler dump its state into
+ 		 * BOOT_DATA + 0x100 (sync flag at word 0, RGX_MIPS_STATE from word 1). */
+-- 
+2.55.0.windows.5
+
