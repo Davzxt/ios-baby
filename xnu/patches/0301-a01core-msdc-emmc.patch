@@ -1,0 +1,498 @@
+diff --git a/bsd/dev/a01core_msdc.h b/bsd/dev/a01core_msdc.h
+new file mode 100644
+index 0000000..dbdb0b0
+--- /dev/null
++++ b/bsd/dev/a01core_msdc.h
+@@ -0,0 +1,364 @@
++/*
++ * Galaxy A01 Core (MediaTek MT6739): MSDC0 eMMC back end for a5xelte_emmc.c.
++ *
++ * Included by a5xelte_emmc.c in place of its Exynos DesignWare back end; it
++ * provides emmc_map_host(), emmc_read_sector() and emmc_write_sector() on
++ * the same emmc_regs / emmc_rd() / emmc_wr() names.
++ *
++ * Samsung's LK has already initialized the card (bus width, HS200/HS400
++ * timing, pad tuning, clocks) and left it in the transfer state, because it
++ * loads boot.img from the user area. This back end keeps all of that. It
++ * only switches the host to PIO and sends one 512-byte block per command
++ * (CMD17 / CMD24), polling MSDC_INT. No DMA, no interrupts, no clock or pad
++ * writes. Register map, interrupt bits and the SDC_CMD encoding follow the
++ * Linux driver drivers/mmc/host/mtk-sd.c; the MSDC0 address and IRQ come
++ * from the A01 Core boot DTB (msdc@11230000, compatible "mediatek,msdc").
++ *
++ * NOT YET RUN ON THE PHONE. Boot-args:
++ *   msdc_rca=N      relative card address (default 1, as Linux/LK assign)
++ *   msdc_noswitch=1 never switch EXT_CSD PARTITION_ACCESS back to the user area
++ */
++#ifndef _BSD_DEV_A01CORE_MSDC_H
++#define _BSD_DEV_A01CORE_MSDC_H
++
++#define A01_MSDC0_PA        0x11230000u
++#define A01_MSDC0_SIZE      0x10000u
++
++#define MSDC_CFG            0x000u
++#define MSDC_INT            0x00cu
++#define MSDC_INTEN          0x010u
++#define MSDC_FIFOCS         0x014u
++#define MSDC_TXDATA         0x018u
++#define MSDC_RXDATA         0x01cu
++#define SDC_CFG             0x030u
++#define SDC_CMD             0x034u
++#define SDC_ARG             0x038u
++#define SDC_STS             0x03cu
++#define SDC_RESP0           0x040u
++#define SDC_BLK_NUM         0x050u
++#define MSDC_DMA_CTRL       0x098u
++
++#define MSDC_CFG_MODE       (1u << 0)   /* 1: MMC/SD mode */
++#define MSDC_CFG_PIO        (1u << 3)
++#define MSDC_CFG_CKSTB      (1u << 7)   /* clock stable (read only) */
++
++#define MSDC_FIFOCS_RXCNT(v) ((v) & 0xffu)          /* bytes in RX FIFO */
++#define MSDC_FIFOCS_TXCNT(v) (((v) >> 16) & 0xffu)  /* bytes in TX FIFO */
++#define MSDC_FIFOCS_CLR     (1u << 31)
++#define MSDC_FIFO_SZ        128u
++
++#define SDC_STS_SDCBUSY     (1u << 0)
++#define SDC_STS_CMDBUSY     (1u << 1)
++
++#define MSDC_INT_CMDRDY     (1u << 8)
++#define MSDC_INT_CMDTMO     (1u << 9)
++#define MSDC_INT_RSPCRCERR  (1u << 10)
++#define MSDC_INT_XFER_COMPL (1u << 12)
++#define MSDC_INT_DATTMO     (1u << 14)
++#define MSDC_INT_DATCRCERR  (1u << 15)
++#define MSDC_INT_CMD_DONE   (MSDC_INT_CMDRDY | MSDC_INT_CMDTMO | MSDC_INT_RSPCRCERR)
++#define MSDC_INT_DAT_ERR    (MSDC_INT_DATTMO | MSDC_INT_DATCRCERR)
++
++/* SDC_CMD: opcode [5:0], response type [9:7], data type [12:11],
++ * write [13], block size [27:16] (mtk-sd.c msdc_cmd_prepare_raw_cmd). */
++#define SDC_CMD_RESP_R1     (1u << 7)
++#define SDC_CMD_RESP_R1B    (7u << 7)
++#define SDC_CMD_SINGLE      (1u << 11)
++#define SDC_CMD_WRITE       (1u << 13)
++#define SDC_CMD_BLKSZ(n)    ((uint32_t)(n) << 16)
++
++/* R1 card status */
++#define R1_ERRORS           0xe4f80000u /* out of range, address, block length,
++	                                     * WP, CRC, illegal, ECC, CC, error */
++#define R1_READY_FOR_DATA   (1u << 8)
++#define R1_STATE(r)         (((r) >> 9) & 0xfu)
++#define R1_STATE_TRAN       4u
++
++#define MSDC_SPIN           4000000u
++
++static vm_offset_t emmc_regs;
++static uint32_t msdc_rca = 1;
++
++static inline uint32_t
++emmc_rd(uint32_t off)
++{
++	uint32_t v = *(volatile uint32_t *)(emmc_regs + off);
++	__asm__ volatile ("dmb oshld" ::: "memory");
++	return v;
++}
++
++static inline void
++emmc_wr(uint32_t off, uint32_t value)
++{
++	__asm__ volatile ("dmb oshst" ::: "memory");
++	*(volatile uint32_t *)(emmc_regs + off) = value;
++}
++
++static int
++msdc_wait_clear(uint32_t off, uint32_t mask)
++{
++	for (uint32_t i = 0; i < MSDC_SPIN; i++) {
++		if (!(emmc_rd(off) & mask)) {
++			return 0;
++		}
++	}
++	return ETIMEDOUT;
++}
++
++static int
++msdc_fifo_reset(void)
++{
++	emmc_wr(MSDC_FIFOCS, emmc_rd(MSDC_FIFOCS) | MSDC_FIFOCS_CLR);
++	return msdc_wait_clear(MSDC_FIFOCS, MSDC_FIFOCS_CLR);
++}
++
++/* One command; waits for its response. Data, if any, is moved by the caller. */
++static int
++msdc_cmd(uint32_t raw, uint32_t arg, uint32_t *resp)
++{
++	if (msdc_wait_clear(SDC_STS, SDC_STS_CMDBUSY | SDC_STS_SDCBUSY)) {
++		printf("A01CORE MSDC: host busy before CMD%u sts=%x\n", raw & 0x3fu, emmc_rd(SDC_STS));
++		return EBUSY;
++	}
++	emmc_wr(MSDC_INT, emmc_rd(MSDC_INT));   /* write-one-to-clear */
++	emmc_wr(SDC_ARG, arg);
++	emmc_wr(SDC_CMD, raw);
++	uint32_t ints = 0;
++	for (uint32_t i = 0; i < MSDC_SPIN; i++) {
++		ints = emmc_rd(MSDC_INT);
++		if (ints & MSDC_INT_CMD_DONE) {
++			break;
++		}
++	}
++	emmc_wr(MSDC_INT, ints & MSDC_INT_CMD_DONE);
++	if (!(ints & MSDC_INT_CMD_DONE)) {
++		printf("A01CORE MSDC: CMD%u no response int=%x sts=%x\n", raw & 0x3fu, ints, emmc_rd(SDC_STS));
++		return ETIMEDOUT;
++	}
++	if (ints & (MSDC_INT_CMDTMO | MSDC_INT_RSPCRCERR)) {
++		return (ints & MSDC_INT_CMDTMO) ? ETIMEDOUT : EIO;
++	}
++	*resp = emmc_rd(SDC_RESP0);
++	if (*resp & R1_ERRORS) {
++		printf("A01CORE MSDC: CMD%u arg=%x R1 error %x\n", raw & 0x3fu, arg, *resp);
++		return EIO;
++	}
++	return 0;
++}
++
++/* CMD13 until READY_FOR_DATA in the transfer state (end of a write's busy). */
++static int
++msdc_wait_tran(uint32_t *status)
++{
++	for (uint32_t tries = 0; tries < 100000; tries++) {
++		int error = msdc_cmd(13u | SDC_CMD_RESP_R1, msdc_rca << 16, status);
++		if (error) {
++			return error;
++		}
++		if ((*status & R1_READY_FOR_DATA) && R1_STATE(*status) == R1_STATE_TRAN) {
++			return 0;
++		}
++	}
++	return ETIMEDOUT;
++}
++
++/* Read one 512-byte data block after a CMD8/CMD17 was issued. */
++static int
++msdc_pio_read_block(uint8_t *out)
++{
++	uint32_t got = 0, ints = 0;
++	for (uint32_t i = 0; i < MSDC_SPIN; i++) {
++		ints = emmc_rd(MSDC_INT);
++		if (ints & MSDC_INT_DAT_ERR) {
++			emmc_wr(MSDC_INT, ints);
++			printf("A01CORE MSDC: read data error int=%x got=%u\n", ints, got);
++			return (ints & MSDC_INT_DATTMO) ? ETIMEDOUT : EIO;
++		}
++		uint32_t avail = MSDC_FIFOCS_RXCNT(emmc_rd(MSDC_FIFOCS));
++		while (avail >= 4 && got < 512u) {
++			uint32_t w = emmc_rd(MSDC_RXDATA);
++			memcpy(out + got, &w, 4);
++			got += 4;
++			avail -= 4;
++		}
++		if (got == 512u && (ints & MSDC_INT_XFER_COMPL)) {
++			emmc_wr(MSDC_INT, MSDC_INT_XFER_COMPL);
++			return 0;
++		}
++	}
++	printf("A01CORE MSDC: read timeout int=%x got=%u fifocs=%x\n", ints, got, emmc_rd(MSDC_FIFOCS));
++	return ETIMEDOUT;
++}
++
++static int
++msdc_prepare_data(void)
++{
++	/* PIO data path; LK's DMA has finished before it jumped to us. */
++	emmc_wr(MSDC_CFG, emmc_rd(MSDC_CFG) | MSDC_CFG_PIO);
++	int error = msdc_fifo_reset();
++	if (!error) {
++		emmc_wr(SDC_BLK_NUM, 1);
++	}
++	return error;
++}
++
++static int
++emmc_read_sector(uint32_t lba, uint8_t *sector)
++{
++	uint32_t resp;
++	int error = msdc_prepare_data();
++	if (!error) {
++		error = msdc_cmd(17u | SDC_CMD_RESP_R1 | SDC_CMD_SINGLE | SDC_CMD_BLKSZ(512), lba, &resp);
++	}
++	if (!error) {
++		error = msdc_pio_read_block(sector);
++	}
++	if (error) {
++		(void)msdc_fifo_reset();
++	}
++	return error;
++}
++
++static int
++emmc_write_sector(uint32_t lba, const uint8_t *sector)
++{
++	uint32_t resp, put = 0, ints = 0;
++	int error = msdc_prepare_data();
++	if (!error) {
++		error = msdc_cmd(24u | SDC_CMD_RESP_R1 | SDC_CMD_SINGLE | SDC_CMD_WRITE |
++		    SDC_CMD_BLKSZ(512), lba, &resp);
++	}
++	if (error) {
++		(void)msdc_fifo_reset();
++		return error;
++	}
++	error = ETIMEDOUT;
++	for (uint32_t i = 0; i < MSDC_SPIN; i++) {
++		ints = emmc_rd(MSDC_INT);
++		if (ints & MSDC_INT_DAT_ERR) {
++			emmc_wr(MSDC_INT, ints);
++			printf("A01CORE MSDC: write data error lba=%u int=%x put=%u\n", lba, ints, put);
++			error = (ints & MSDC_INT_DATTMO) ? ETIMEDOUT : EIO;
++			break;
++		}
++		uint32_t used = MSDC_FIFOCS_TXCNT(emmc_rd(MSDC_FIFOCS));
++		while (put < 512u && used + 4 <= MSDC_FIFO_SZ) {
++			uint32_t w;
++			memcpy(&w, sector + put, 4);
++			emmc_wr(MSDC_TXDATA, w);
++			put += 4;
++			used += 4;
++		}
++		if (put == 512u && (ints & MSDC_INT_XFER_COMPL)) {
++			emmc_wr(MSDC_INT, MSDC_INT_XFER_COMPL);
++			error = 0;
++			break;
++		}
++	}
++	if (error) {
++		(void)msdc_fifo_reset();
++		return error;
++	}
++	/* The card programs the block while DAT0 is low. */
++	if (msdc_wait_clear(SDC_STS, SDC_STS_SDCBUSY)) {
++		return ETIMEDOUT;
++	}
++	return msdc_wait_tran(&resp);
++}
++
++/* EXT_CSD (CMD8): check that LK left the user area selected. */
++static int
++msdc_check_partition(void)
++{
++	uint8_t ext_csd[512];
++	uint32_t resp;
++	int error = msdc_prepare_data();
++	if (!error) {
++		error = msdc_cmd(8u | SDC_CMD_RESP_R1 | SDC_CMD_SINGLE | SDC_CMD_BLKSZ(512), 0, &resp);
++	}
++	if (!error) {
++		error = msdc_pio_read_block(ext_csd);
++	}
++	if (error) {
++		(void)msdc_fifo_reset();
++		printf("A01CORE MSDC: EXT_CSD read failed (%d)\n", error);
++		return error;
++	}
++	uint32_t sectors = (uint32_t)ext_csd[212] | (uint32_t)ext_csd[213] << 8 |
++	    (uint32_t)ext_csd[214] << 16 | (uint32_t)ext_csd[215] << 24;
++	uint8_t part = ext_csd[179];
++	printf("A01CORE MSDC: EXT_CSD rev=%u sectors=%u (%u MiB) part_config=%#x hs_timing=%#x bus_width=%#x\n",
++	    ext_csd[192], sectors, sectors / 2048u, part, ext_csd[185], ext_csd[183]);
++	if ((part & 7u) == 0) {
++		return 0;
++	}
++	int noswitch = 0;
++	(void)PE_parse_boot_argn("msdc_noswitch", &noswitch, sizeof(noswitch));
++	if (noswitch) {
++		printf("A01CORE MSDC: LK left partition %u selected, not the user area\n", part & 7u);
++		return ENXIO;
++	}
++	/* CMD6 SWITCH, access mode 3 (write byte): PARTITION_ACCESS = 0. */
++	uint32_t arg = (3u << 24) | (179u << 16) | ((uint32_t)(part & ~7u) << 8);
++	error = msdc_cmd(6u | SDC_CMD_RESP_R1B, arg, &resp);
++	if (!error && msdc_wait_clear(SDC_STS, SDC_STS_SDCBUSY)) {
++		error = ETIMEDOUT;
++	}
++	if (!error) {
++		error = msdc_wait_tran(&resp);
++	}
++	printf("A01CORE MSDC: switched to the user area (%d)\n", error);
++	return error;
++}
++
++static int
++emmc_map_host(void)
++{
++	DTEntry node;
++	uintptr_t const *reg = NULL;
++	unsigned int size = 0;
++	uint32_t status = 0;
++	if (emmc_regs) {
++		return 0;
++	}
++	if (SecureDTLookupEntry(NULL, "/a01core-emmc", &node) != kSuccess ||
++	    SecureDTGetProperty(node, "reg", (void const **)&reg, &size) != kSuccess ||
++	    size < 2 * sizeof(uintptr_t) || reg[0] != A01_MSDC0_PA || reg[1] < 0x1000u) {
++		printf("A01CORE MSDC: missing or unexpected ADT register window\n");
++		return ENXIO;
++	}
++	emmc_regs = ml_io_map(reg[0], reg[1]);
++	if (!emmc_regs) {
++		printf("A01CORE MSDC: MMIO map failed\n");
++		return ENOMEM;
++	}
++	(void)PE_parse_boot_argn("msdc_rca", &msdc_rca, sizeof(msdc_rca));
++	uint32_t cfg = emmc_rd(MSDC_CFG);
++	printf("A01CORE MSDC: cfg=%x sdc_cfg=%x sts=%x inten=%x dma_ctrl=%x fifocs=%x\n",
++	    cfg, emmc_rd(SDC_CFG), emmc_rd(SDC_STS), emmc_rd(MSDC_INTEN),
++	    emmc_rd(MSDC_DMA_CTRL), emmc_rd(MSDC_FIFOCS));
++	if (cfg == 0 || cfg == 0xffffffffu || !(cfg & MSDC_CFG_MODE) || !(cfg & MSDC_CFG_CKSTB)) {
++		printf("A01CORE MSDC: host not left running by LK\n");
++		emmc_regs = 0;
++		return ENXIO;
++	}
++	/* Polled: keep the host's interrupt line quiet. */
++	emmc_wr(MSDC_INTEN, 0);
++	int error = msdc_wait_tran(&status);
++	if (error && msdc_rca == 1) {
++		/* Some LK builds number the card differently. */
++		msdc_rca = 2;
++		error = msdc_wait_tran(&status);
++	}
++	printf("A01CORE MSDC: CMD13 rca=%u status=%x state=%u (%d)\n",
++	    msdc_rca, status, R1_STATE(status), error);
++	if (!error) {
++		error = msdc_check_partition();
++	}
++	if (error) {
++		emmc_regs = 0;
++	}
++	return error;
++}
++
++#endif /* _BSD_DEV_A01CORE_MSDC_H */
+diff --git a/bsd/dev/a5xelte_emmc.c b/bsd/dev/a5xelte_emmc.c
+index 9ad7fd6..3f4c1ab 100644
+--- a/bsd/dev/a5xelte_emmc.c
++++ b/bsd/dev/a5xelte_emmc.c
+@@ -33,6 +33,7 @@ extern int hz;
+ #define A5_LOG_SIZE   (4u << 20)
+ #define A5_LOG_SECTORS (1u + A5_LOG_SIZE / 512u)
+ 
++#if !defined(ARM64_BOARD_CONFIG_A01CORE)
+ #define EMMC_CTRL       0x000u
+ #define EMMC_PWREN      0x004u
+ #define EMMC_CLKENA     0x010u
+@@ -69,9 +70,22 @@ extern int hz;
+ #define INT_ERRORS      ((1u << 12) | (1u << 11) | (1u << 10) | (1u << 9) | \
+                          (1u << 8) | (1u << 7) | (1u << 6) | (1u << 1))
+ 
++#endif /* !A01CORE */
++
++#if defined(ARM64_BOARD_CONFIG_A01CORE)
++/* MT6739 GPT names are lower case; there is no SYSTEM partition (it lives
++ * in the dynamic "super"), so the console log goes to the start of "cache". */
++#define EMMC_RW_ROOT_NAME  "userdata"
++#define EMMC_LOG_PART_NAME "cache"
++#define EMMC_PORT          "A01CORE"
++#else
+ static vm_offset_t emmc_regs;
++#define EMMC_RW_ROOT_NAME  "USERDATA"
++#define EMMC_LOG_PART_NAME "SYSTEM"
++#define EMMC_PORT          "A5XELTE"
++#endif
+ static uint64_t emmc_first_lba, emmc_nsectors;
+-static char emmc_partition_name[16] = "SYSTEM";
++static char emmc_partition_name[16] = EMMC_LOG_PART_NAME;
+ static dev_t emmc_bdev;
+ static bool emmc_ready;
+ static bool emmc_writable;
+@@ -83,6 +97,9 @@ static int emmc_log_chan;
+ static LCK_GRP_DECLARE(a5xelte_emmc_grp, "a5xelte_emmc");
+ static LCK_MTX_DECLARE(a5xelte_emmc_lock, &a5xelte_emmc_grp);
+ 
++#if defined(ARM64_BOARD_CONFIG_A01CORE)
++#include "a01core_msdc.h"
++#else
+ static inline uint32_t
+ emmc_rd(uint32_t off)
+ {
+@@ -301,6 +318,8 @@ out:
+ 	return error;
+ }
+ 
++#endif /* !A01CORE: Exynos DesignWare back end */
++
+ static uint32_t
+ emmc_le32(const uint8_t *p)
+ {
+@@ -333,9 +352,9 @@ emmc_find_root_partition(void)
+ 	(void)PE_parse_boot_argn("emmcroot", emmc_partition_name,
+ 	    sizeof(emmc_partition_name));
+ 	emmc_partition_name[sizeof(emmc_partition_name) - 1] = '\0';
+-	if (strcmp(emmc_partition_name, "SYSTEM") &&
+-	    strcmp(emmc_partition_name, "USERDATA")) {
+-		printf("A5XELTE eMMC: emmcroot must be SYSTEM or USERDATA\n");
++	if (strcmp(emmc_partition_name, EMMC_LOG_PART_NAME) &&
++	    strcmp(emmc_partition_name, EMMC_RW_ROOT_NAME)) {
++		printf(EMMC_PORT " eMMC: emmcroot must be " EMMC_LOG_PART_NAME " or " EMMC_RW_ROOT_NAME "\n");
+ 		return EINVAL;
+ 	}
+ 	emmc_first_lba = 0;
+@@ -381,7 +400,7 @@ emmc_find_root_partition(void)
+ 			const uint8_t *p = entry + j * 128;
+ 			bool match = true;
+ 			bool system_match = true;
+-			static const char system_name[] = "SYSTEM";
++			static const char system_name[] = EMMC_LOG_PART_NAME;
+ 			for (unsigned k = 0; k <= strlen(emmc_partition_name); k++) {
+ 				if (p[56 + k * 2] != (uint8_t)emmc_partition_name[k] ||
+ 				    p[57 + k * 2] != 0) {
+@@ -418,7 +437,7 @@ emmc_find_root_partition(void)
+ 		return EIO;
+ 	}
+ 	if (emmc_log_first_lba == emmc_first_lba && emmc_log_nsectors &&
+-	    strcmp(emmc_partition_name, "SYSTEM") == 0) {
++	    strcmp(emmc_partition_name, EMMC_LOG_PART_NAME) == 0) {
+ 		/* A log writer must never overlap the selected root. */
+ 		emmc_log_nsectors = 0;
+ 	}
+@@ -428,13 +447,14 @@ emmc_find_root_partition(void)
+ 	}
+ 	int enable_write = 0;
+ 	(void)PE_parse_boot_argn("emmcwrite", &enable_write, sizeof(enable_write));
+-	emmc_writable = !strcmp(emmc_partition_name, "USERDATA") && enable_write == 1;
++	emmc_writable = !strcmp(emmc_partition_name, EMMC_RW_ROOT_NAME) && enable_write == 1;
+ 	printf("A5XELTE eMMC: GPT %s first=%llu sectors=%llu %s\n",
+ 	    emmc_partition_name, emmc_first_lba, emmc_nsectors,
+ 	    emmc_writable ? "writable" : "read-only");
+ 	return 0;
+ }
+ 
++#if !defined(ARM64_BOARD_CONFIG_A01CORE)
+ static int
+ emmc_map_host(void)
+ {
+@@ -460,6 +480,7 @@ emmc_map_host(void)
+ 	    emmc_rd(EMMC_CLKENA), emmc_rd(EMMC_HCON));
+ 	return 0;
+ }
++#endif /* !A01CORE */
+ 
+ void
+ a5xelte_emmc_probe(void)
+@@ -703,7 +724,7 @@ emmc_log_start(void)
+ 	thread_t thread;
+ 	(void)PE_parse_boot_argn("a5log", &enabled, sizeof(enabled));
+ 	if (enabled != 1 || !emmc_ready || !emmc_writable ||
+-	    strcmp(emmc_partition_name, "USERDATA") ||
++	    strcmp(emmc_partition_name, EMMC_RW_ROOT_NAME) ||
+ 	    emmc_log_nsectors < A5_LOG_SECTORS ||
+ 	    emmc_log_first_lba == 0 ||
+ 	    (emmc_log_first_lba < emmc_first_lba + emmc_nsectors &&
+@@ -712,7 +733,7 @@ emmc_log_start(void)
+ 		return;
+ 	}
+ 	emmc_log_enabled = true;
+-	printf("A5XELTE LOG: SYSTEM GPT first=%llu, %u sectors reserved\n",
++	printf("A5XELTE LOG: " EMMC_LOG_PART_NAME " GPT first=%llu, %u sectors reserved\n",
+ 	    emmc_log_first_lba, A5_LOG_SECTORS);
+ 	if (kernel_thread_start(emmc_log_thread, NULL, &thread) == KERN_SUCCESS) {
+ 		thread_deallocate(thread);

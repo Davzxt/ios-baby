@@ -10,8 +10,14 @@ on:
         description: RELEASE / DEVELOPMENT / DEBUG
         default: DEVELOPMENT
       machine_config:
-        description: xnu MACHINE_CONFIG (HEROLTE = Galaxy S7, A5XELTE, SWEET)
-        default: HEROLTE
+        description: xnu MACHINE_CONFIG (A01CORE = Galaxy A01 Core, HEROLTE = Galaxy S7, A5XELTE, SWEET)
+        default: A01CORE
+      a01core_fb_pa:
+        description: A01CORE only - LK framebuffer address printed by the shim/a01core probe (empty = header default)
+        default: ""
+      a01core_fb_stride:
+        description: A01CORE only - framebuffer row bytes printed by the probe (empty = 2944)
+        default: ""
       keep_going:
         description: make -k (collect all compile errors in one run)
         default: "true"
@@ -19,7 +25,7 @@ on:
         description: GitHub runner image (empty = both macos-14 and macos-15-intel)
         default: ""
   push:
-    branches: [main, herolte, codex/a5xelte-bringup]
+    branches: [main, herolte, a01core, codex/a5xelte-bringup]
     paths:
       - "xnu/patches/**"
       - ".github/workflows/xnu.yml"
@@ -33,7 +39,7 @@ env:
   DXB_SHA: 663906528d1cd5ea8fde7de6f16de73db9511549
   MACOS_VERSION: ${{ inputs.macos_version || '13.5' }}
   KERNEL_CONFIG: ${{ inputs.kernel_config || 'DEVELOPMENT' }}
-  MACHINE_CONFIG: ${{ inputs.machine_config || 'HEROLTE' }}
+  MACHINE_CONFIG: ${{ inputs.machine_config || 'A01CORE' }}
 
 jobs:
   build:
@@ -65,7 +71,7 @@ jobs:
           from pathlib import Path
           path, config = Path(sys.argv[1]), sys.argv[2]
           old = 'ARCHS="x86_64 arm64e" VALID_ARCHS="x86_64 arm64e"'
-          if config in ('A5XELTE', 'HEROLTE'):
+          if config in ('A5XELTE', 'HEROLTE', 'A01CORE'):
               new = ('ARCHS="arm64" VALID_ARCHS="arm64" OTHER_CFLAGS="-mkernel -nostdinc '
                      '-Wno-packed -mcpu=cortex-a53 -march=armv8-a+crypto"')
           else:
@@ -100,6 +106,21 @@ jobs:
           MAKEFLAGS: ${{ inputs.keep_going == 'false' && '' || '-k' }}
         run: |
           set -o pipefail
+          # A01CORE: probe-measured framebuffer values (MakeInc.def reads
+          # A01CORE_DEFINES from the environment).
+          A01CORE_DEFINES=""
+          case "${{ inputs.a01core_fb_pa }}" in
+            "") ;;
+            0x[0-9a-fA-F]*) A01CORE_DEFINES="-DA01CORE_FB_PA=${{ inputs.a01core_fb_pa }}" ;;
+            *) echo "a01core_fb_pa must be hex (0x...)"; exit 1 ;;
+          esac
+          case "${{ inputs.a01core_fb_stride }}" in
+            "") ;;
+            [0-9]*) A01CORE_DEFINES="$A01CORE_DEFINES -DA01CORE_FB_STRIDE=${{ inputs.a01core_fb_stride }}" ;;
+            *) echo "a01core_fb_stride must be a decimal byte count"; exit 1 ;;
+          esac
+          export A01CORE_DEFINES
+          echo "A01CORE_DEFINES=$A01CORE_DEFINES"
           bash build.sh 2>&1 | tee ../build.log
 
       # Logs need a GitHub sign-in to read; check-run annotations are public.
@@ -186,7 +207,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Check Cortex-A53 compatibility (no ARMv8.1 LSE atomics)
-        if: env.MACHINE_CONFIG == 'A5XELTE' || env.MACHINE_CONFIG == 'HEROLTE'
+        if: env.MACHINE_CONFIG == 'A5XELTE' || env.MACHINE_CONFIG == 'HEROLTE' || env.MACHINE_CONFIG == 'A01CORE'
         run: |
           kernel="out/kernel.$(echo "$KERNEL_CONFIG" | tr A-Z a-z).$(echo "$MACHINE_CONFIG" | tr A-Z a-z)"
           test -f "$kernel"

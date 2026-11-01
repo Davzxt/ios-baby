@@ -1,0 +1,196 @@
+diff --git a/bsd/dev/a01core_touch.c b/bsd/dev/a01core_touch.c
+new file mode 100644
+index 0000000..ea7a737
+--- /dev/null
++++ b/bsd/dev/a01core_touch.c
+@@ -0,0 +1,190 @@
++/*
++ * Galaxy A01 Core (MediaTek MT6739) touchscreen: bring-up PROBE, not a
++ * touch driver yet.
++ *
++ * The A01 Core ships with one of two TDDI panels (dtbo fragment@61, spi0):
++ *   TD4150   (Synaptics TCM over SPI, chip select 0, "synaptics,tcm-spi")
++ *   NT36525B (Novatek over SPI, chip select 1, "novatek,NVT-ts-spi")
++ * Both use the MT6739 SPI0 controller at 0x1100a000, pins GPIO31 CS,
++ * GPIO32 CLK, GPIO33 MISO, GPIO34 MOSI (pinmux function 1) and GPIO0 as the
++ * active-low attention line. Both are "zero flash" / host-download parts:
++ * the touch firmware (/vendor/firmware/tsp_synaptics/td4150_a01core.img on
++ * the TD4150 variant) must be sent by the host at every power-up before the
++ * chip reports touches. That protocol lives in Samsung's GPL kernel source
++ * for SM-A013 (synaptics_tcm zeroflash, nt36xxx hostdl) and is not ported
++ * here: this file only checks the hardware path so it can be.
++ *
++ *   a01touch=0 (default) off
++ *   a01touch=1 read-only: pinmux, GPIO0 level, SPI0 registers, clock gate
++ *   a01touch=2 also: SPI0 pins to function 1, ungate the SPI0 clock, and
++ *              clock 16 bytes in from chip select 0 (a TCM device sends its
++ *              0xA5-marked identify report after reset). Printed, not parsed.
++ *
++ * Register sources: Linux spi-mt65xx.c (MT6765-style "enhance timing"
++ * controller), pinctrl-mt6765 (GPIO 0x10005000: DIN 0x200, MODE 0x300,
++ * 4 bits per pin) and clk-mt6765 (infracfg_ao CG1 bit 6 = SPI0). The MT6739
++ * values are assumed equal and NOT verified; check every line of the
++ * a01touch=1 output against them before trying a01touch=2.
++ */
++#if defined(ARM64_BOARD_CONFIG_A01CORE)
++#include <sys/param.h>
++#include <sys/systm.h>
++#include <kern/clock.h>
++#include <machine/machine_routines.h>
++#include <pexpert/pexpert.h>
++
++extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
++extern void delay(int usec);
++
++#define A01_GPIO_PA          0x10005000u
++#define GPIO_DIN(n)          (0x200u + ((n) / 32u) * 0x10u)
++#define GPIO_MODE(n)         (0x300u + ((n) / 8u) * 0x10u)
++#define GPIO_MODE_SET(n)     (GPIO_MODE(n) + 4u)
++#define GPIO_MODE_CLR(n)     (GPIO_MODE(n) + 8u)
++#define GPIO_MODE_SHIFT(n)   (((n) % 8u) * 4u)
++
++#define A01_INFRA_AO_PA      0x10001000u
++#define INFRA_CG1_SET        0x088u
++#define INFRA_CG1_CLR        0x08cu
++#define INFRA_CG1_STA        0x094u
++#define INFRA_CG1_SPI0       (1u << 6)
++
++#define A01_SPI0_PA          0x1100a000u
++#define SPI_CFG0             0x000u
++#define SPI_CFG1             0x004u
++#define SPI_TX_DATA          0x010u
++#define SPI_RX_DATA          0x014u
++#define SPI_CMD              0x018u
++#define SPI_STATUS0          0x01cu
++#define SPI_STATUS1          0x020u
++#define SPI_PAD_SEL          0x024u
++#define SPI_CFG2             0x028u
++#define SPI_CMD_ACT          (1u << 0)
++#define SPI_CMD_RST          (1u << 2)
++#define SPI_CMD_RX_DMA       (1u << 10)
++#define SPI_CMD_TX_DMA       (1u << 11)
++#define SPI_CMD_TXMSBF       (1u << 12)
++#define SPI_CMD_RXMSBF       (1u << 13)
++
++#define A01_TS_IRQ_GPIO      0u
++static const uint8_t a01_spi_pins[4] = { 31, 32, 33, 34 };   /* CS CLK MI MO */
++
++static vm_offset_t a01_gpio, a01_infra, a01_spi;
++
++static uint32_t
++rd(vm_offset_t b, uint32_t o)
++{
++	uint32_t v = *(volatile uint32_t *)(b + o);
++	__asm__ volatile ("dmb oshld" ::: "memory");
++	return v;
++}
++
++static void
++wr(vm_offset_t b, uint32_t o, uint32_t v)
++{
++	__asm__ volatile ("dmb oshst" ::: "memory");
++	*(volatile uint32_t *)(b + o) = v;
++}
++
++static unsigned
++a01_gpio_mode(unsigned pin)
++{
++	return (rd(a01_gpio, GPIO_MODE(pin)) >> GPIO_MODE_SHIFT(pin)) & 0xfu;
++}
++
++static void
++a01_touch_dump(void)
++{
++	printf("A01CORE TOUCH: GPIO%u (attention) din=%u mode=%u\n", A01_TS_IRQ_GPIO,
++	    (rd(a01_gpio, GPIO_DIN(A01_TS_IRQ_GPIO)) >> (A01_TS_IRQ_GPIO % 32u)) & 1u,
++	    a01_gpio_mode(A01_TS_IRQ_GPIO));
++	printf("A01CORE TOUCH: spi pins mode cs=%u clk=%u mi=%u mo=%u (want 1)\n",
++	    a01_gpio_mode(a01_spi_pins[0]), a01_gpio_mode(a01_spi_pins[1]),
++	    a01_gpio_mode(a01_spi_pins[2]), a01_gpio_mode(a01_spi_pins[3]));
++	printf("A01CORE TOUCH: infracfg_ao cg1_sta=%#x (spi0 %s)\n", rd(a01_infra, INFRA_CG1_STA),
++	    (rd(a01_infra, INFRA_CG1_STA) & INFRA_CG1_SPI0) ? "gated" : "running");
++	printf("A01CORE TOUCH: spi0 cfg0=%#x cfg1=%#x cfg2=%#x cmd=%#x st0=%#x st1=%#x pad=%#x\n",
++	    rd(a01_spi, SPI_CFG0), rd(a01_spi, SPI_CFG1), rd(a01_spi, SPI_CFG2),
++	    rd(a01_spi, SPI_CMD), rd(a01_spi, SPI_STATUS0), rd(a01_spi, SPI_STATUS1),
++	    rd(a01_spi, SPI_PAD_SEL));
++}
++
++/* One FIFO-mode full-duplex transfer of len (<= 32, multiple of 4) bytes. */
++static int
++a01_spi_xfer(const uint8_t *tx, uint8_t *rx, uint32_t len)
++{
++	uint32_t cmd = rd(a01_spi, SPI_CMD);
++	cmd &= ~(SPI_CMD_RX_DMA | SPI_CMD_TX_DMA | (3u << 8));   /* PIO, mode 0 */
++	cmd |= SPI_CMD_TXMSBF | SPI_CMD_RXMSBF;
++	wr(a01_spi, SPI_CMD, cmd | SPI_CMD_RST);
++	wr(a01_spi, SPI_CMD, cmd);
++	/* ~2 MHz from a ~100 MHz source: SCK high/low 25 ticks each (CFG2),
++	 * CS setup/hold 50 ticks (CFG0, enhance-timing layout). */
++	wr(a01_spi, SPI_CFG2, (24u << 16) | 24u);
++	wr(a01_spi, SPI_CFG0, (49u << 16) | 49u);
++	wr(a01_spi, SPI_CFG1, ((len - 1u) << 16) | 2u);
++	for (uint32_t i = 0; i < len; i += 4) {
++		uint32_t w;
++		memcpy(&w, tx + i, 4);
++		wr(a01_spi, SPI_TX_DATA, w);
++	}
++	(void)rd(a01_spi, SPI_STATUS0);          /* read clears */
++	wr(a01_spi, SPI_CMD, cmd | SPI_CMD_ACT);
++	uint32_t st = 0;
++	for (unsigned i = 0; i < 100000; i++) {
++		st = rd(a01_spi, SPI_STATUS0);
++		if (st) {
++			break;
++		}
++		delay(1);
++	}
++	if (!st) {
++		printf("A01CORE TOUCH: spi transfer timeout st1=%#x\n", rd(a01_spi, SPI_STATUS1));
++		return ETIMEDOUT;
++	}
++	for (uint32_t i = 0; i < len; i += 4) {
++		uint32_t w = rd(a01_spi, SPI_RX_DATA);
++		memcpy(rx + i, &w, 4);
++	}
++	return 0;
++}
++
++void a01core_touch_probe(void);
++void
++a01core_touch_probe(void)
++{
++	int mode = 0;
++	(void)PE_parse_boot_argn("a01touch", &mode, sizeof(mode));
++	if (mode <= 0) {
++		printf("A01CORE TOUCH: no touch driver yet (boot-arg a01touch=1 probes)\n");
++		return;
++	}
++	a01_gpio = ml_io_map(A01_GPIO_PA, 0x1000);
++	a01_infra = ml_io_map(A01_INFRA_AO_PA, 0x1000);
++	a01_spi = ml_io_map(A01_SPI0_PA, 0x1000);
++	if (!a01_gpio || !a01_infra || !a01_spi) {
++		printf("A01CORE TOUCH: MMIO map failed\n");
++		return;
++	}
++	a01_touch_dump();
++	if (mode < 2) {
++		return;
++	}
++	for (unsigned i = 0; i < 4; i++) {
++		unsigned pin = a01_spi_pins[i];
++		wr(a01_gpio, GPIO_MODE_CLR(pin), 0xfu << GPIO_MODE_SHIFT(pin));
++		wr(a01_gpio, GPIO_MODE_SET(pin), 1u << GPIO_MODE_SHIFT(pin));
++	}
++	wr(a01_infra, INFRA_CG1_CLR, INFRA_CG1_SPI0);
++	delay(10);
++	a01_touch_dump();
++	uint8_t tx[16] = { 0 }, rx[16] = { 0 };
++	int error = a01_spi_xfer(tx, rx, sizeof(rx));
++	printf("A01CORE TOUCH: cs0 read (%d) %02x %02x %02x %02x %02x %02x %02x %02x "
++	    "%02x %02x %02x %02x %02x %02x %02x %02x%s\n", error,
++	    rx[0], rx[1], rx[2], rx[3], rx[4], rx[5], rx[6], rx[7],
++	    rx[8], rx[9], rx[10], rx[11], rx[12], rx[13], rx[14], rx[15],
++	    rx[0] == 0xa5 ? " (TCM marker: SPI path works)" : "");
++	a01_touch_dump();
++}
++#endif /* ARM64_BOARD_CONFIG_A01CORE */

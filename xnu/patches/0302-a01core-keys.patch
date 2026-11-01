@@ -1,0 +1,276 @@
+diff --git a/bsd/dev/a01core_keys.c b/bsd/dev/a01core_keys.c
+new file mode 100644
+index 0000000..87320f1
+--- /dev/null
++++ b/bsd/dev/a01core_keys.c
+@@ -0,0 +1,238 @@
++/*
++ * Galaxy A01 Core (MediaTek MT6739) keys, polled.
++ *
++ * From the A01 Core boot DTB and its dtbo (fragment "keypad"):
++ *   Volume Up   - MTK keypad matrix, kpd-hw-init-map[1] = KEY_VOLUMEUP:
++ *                 KP_MEM1 bit 1 at 0x10010004, 0 = pressed.
++ *   Power       - MT6357 PMIC PWRKEY  (kpd-sw-pwrkey = KEY_POWER)
++ *   Volume Down - MT6357 PMIC HOMEKEY (kpd-sw-rstkey = KEY_VOLUMEDOWN)
++ * The PMIC is behind the PMIC wrapper (pwrap@1000d000). Its key status is
++ * MT6357_TOPSTATUS (0x28): bit 1 PWRKEY_DEB, bit 3 HOMEKEY_DEB, 0 = pressed
++ * (Linux mtk-pmic-keys.c, mt6357 regs).
++ *
++ * Read only: no pinmux, clock or PMIC writes. The pwrap WACS2 offsets
++ * (0xc20/0xc24/0xc28) are those of the MT6765 wrapper in Linux
++ * (mtk-pmic-wrap.c), the same MT6357-era IP; they are NOT verified on the
++ * MT6739 yet, so the PMIC half checks the wrapper state and the PMIC chip
++ * id first and switches itself off if either looks wrong.
++ *
++ * Boot-args: a01keys=0 (off), a01keys_pmic=0 (keypad only),
++ * a01keys_home=1 (Volume Down acts as the Home button).
++ */
++#if defined(ARM64_BOARD_CONFIG_A01CORE)
++#include <sys/param.h>
++#include <sys/systm.h>
++#include <kern/clock.h>
++#include <kern/thread.h>
++#include <kern/sched_prim.h>
++#include <mach/mach_time.h>
++#include <machine/machine_routines.h>
++#include <pexpert/pexpert.h>
++
++extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
++extern void sweet_hid_key(int key, int down);
++/* Last Power press; SweetFramebuffer.cpp reads it (bsd/dev/a5xelte_keys.c). */
++extern uint64_t a5xelte_power_pressed_at;
++
++#define A01_KP_PA            0x10010000u
++#define A01_KP_MEM1          0x0004u
++#define A01_KP_VOLUP_BIT     1u
++
++#define A01_PWRAP_PA         0x1000d000u
++#define PWRAP_WACS2_CMD      0xc20u
++#define PWRAP_WACS2_RDATA    0xc24u
++#define PWRAP_WACS2_VLDCLR   0xc28u
++#define WACS_FSM(v)          (((v) >> 16) & 7u)
++#define WACS_FSM_IDLE        0u
++#define WACS_FSM_WFVLDCLR    6u
++#define WACS_INIT_DONE(v)    (((v) >> 21) & 1u)
++
++#define MT6357_HWCID         0x0008u
++#define MT6357_TOPSTATUS     0x0028u
++#define MT6357_PWRKEY_DEB    (1u << 1)
++#define MT6357_HOMEKEY_DEB   (1u << 3)
++
++/* Bits of a sample: 1 = released. Order of sweet_hid_key(): power,
++ * volume up, volume down, home. */
++#define S_POWER   (1u << 0)
++#define S_VOLUP   (1u << 1)
++#define S_VOLDOWN (1u << 2)
++
++static vm_offset_t a01_kp, a01_pwrap;
++static bool a01_kp_ok, a01_pmic_ok, a01_keys_started;
++static int a01_keys_sleep, a01_home_on_voldown;
++
++static uint32_t
++a01_rd(vm_offset_t base, uint32_t off)
++{
++	uint32_t v = *(volatile uint32_t *)(base + off);
++	__asm__ volatile ("dmb oshld" ::: "memory");
++	return v;
++}
++
++static void
++a01_wr(vm_offset_t base, uint32_t off, uint32_t v)
++{
++	__asm__ volatile ("dmb oshst" ::: "memory");
++	*(volatile uint32_t *)(base + off) = v;
++}
++
++static int
++pwrap_wait_fsm(uint32_t want, uint32_t *last)
++{
++	for (unsigned i = 0; i < 100000; i++) {
++		*last = a01_rd(a01_pwrap, PWRAP_WACS2_RDATA);
++		if (WACS_FSM(*last) == want) {
++			return 0;
++		}
++	}
++	return ETIMEDOUT;
++}
++
++/* WACS2 16-bit read (Linux pwrap_read16 without the arbiter capability). */
++static int
++pwrap_read16(uint32_t adr, uint16_t *val)
++{
++	uint32_t r;
++	if (pwrap_wait_fsm(WACS_FSM_IDLE, &r)) {
++		if (WACS_FSM(r) != WACS_FSM_WFVLDCLR) {
++			return ETIMEDOUT;
++		}
++		/* A previous read was never acknowledged. */
++		a01_wr(a01_pwrap, PWRAP_WACS2_VLDCLR, 1);
++		if (pwrap_wait_fsm(WACS_FSM_IDLE, &r)) {
++			return ETIMEDOUT;
++		}
++	}
++	a01_wr(a01_pwrap, PWRAP_WACS2_CMD, (adr >> 1) << 16);
++	if (pwrap_wait_fsm(WACS_FSM_WFVLDCLR, &r)) {
++		return ETIMEDOUT;
++	}
++	*val = (uint16_t)(r & 0xffffu);
++	a01_wr(a01_pwrap, PWRAP_WACS2_VLDCLR, 1);
++	return 0;
++}
++
++static uint32_t
++a01_keys_sample(void)
++{
++	uint32_t s = S_POWER | S_VOLUP | S_VOLDOWN;
++	if (a01_kp_ok && !(a01_rd(a01_kp, A01_KP_MEM1) & (1u << A01_KP_VOLUP_BIT))) {
++		s &= ~S_VOLUP;
++	}
++	if (a01_pmic_ok) {
++		uint16_t top;
++		if (pwrap_read16(MT6357_TOPSTATUS, &top) == 0) {
++			if (!(top & MT6357_PWRKEY_DEB)) {
++				s &= ~S_POWER;
++			}
++			if (!(top & MT6357_HOMEKEY_DEB)) {
++				s &= ~S_VOLDOWN;
++			}
++		}
++	}
++	return s;
++}
++
++static void
++a01_keys_wait(void)
++{
++	uint64_t deadline;
++	clock_interval_to_deadline(10, NSEC_PER_MSEC, &deadline);
++	(void)assert_wait_deadline(&a01_keys_sleep, THREAD_UNINT, deadline);
++	thread_block(THREAD_CONTINUE_NULL);
++}
++
++static void
++a01_keys_thread(void *arg, wait_result_t result)
++{
++	uint32_t stable = a01_keys_sample(), previous = stable;
++	unsigned repeated = 0;
++	(void)arg;
++	(void)result;
++	for (;;) {
++		uint32_t sample = a01_keys_sample();
++		if (sample == previous) {
++			if (repeated < 2) {
++				repeated++;
++			}
++		} else {
++			previous = sample;
++			repeated = 0;
++		}
++		if (repeated == 2 && stable != sample) {
++			for (int key = 0; key < 3; key++) {
++				uint32_t bit = 1u << key;
++				if (!((stable ^ sample) & bit)) {
++					continue;
++				}
++				int down = !(sample & bit);
++				int hid = (key == 2 && a01_home_on_voldown) ? 3 : key;
++				printf("A01CORE KEYS: key=%d down=%d sample=%#x\n", hid, down, sample);
++				if (key == 0 && down) {
++					a5xelte_power_pressed_at = mach_absolute_time();
++				}
++				sweet_hid_key(hid, down);
++			}
++			stable = sample;
++		}
++		a01_keys_wait();
++	}
++}
++
++void a01core_keys_init(void);
++void
++a01core_keys_init(void)
++{
++	thread_t thread;
++	int enabled = 1, pmic = 1;
++	if (a01_keys_started) {
++		return;
++	}
++	a01_keys_started = true;
++	(void)PE_parse_boot_argn("a01keys", &enabled, sizeof(enabled));
++	(void)PE_parse_boot_argn("a01keys_pmic", &pmic, sizeof(pmic));
++	(void)PE_parse_boot_argn("a01keys_home", &a01_home_on_voldown, sizeof(a01_home_on_voldown));
++	if (!enabled) {
++		printf("A01CORE KEYS: disabled\n");
++		return;
++	}
++	a01_kp = ml_io_map(A01_KP_PA, 0x1000);
++	if (a01_kp) {
++		uint32_t mem1 = a01_rd(a01_kp, A01_KP_MEM1);
++		/* Released keys read as 1: an all-zero matrix means a gated block. */
++		a01_kp_ok = (mem1 & 0xffffu) != 0;
++		printf("A01CORE KEYS: keypad sta=%#x mem1=%#x %s\n", a01_rd(a01_kp, 0),
++		    mem1, a01_kp_ok ? "ok" : "looks gated, Volume Up off");
++	}
++	if (pmic) {
++		a01_pwrap = ml_io_map(A01_PWRAP_PA, 0x1000);
++	}
++	if (a01_pwrap) {
++		uint32_t rdata = a01_rd(a01_pwrap, PWRAP_WACS2_RDATA);
++		uint16_t cid = 0, top = 0;
++		int error = EINVAL;
++		if (rdata != 0xffffffffu && WACS_INIT_DONE(rdata)) {
++			error = pwrap_read16(MT6357_HWCID, &cid);
++			if (!error) {
++				error = pwrap_read16(MT6357_TOPSTATUS, &top);
++			}
++		}
++		/* MT6357 chip ids are 0x57xx. */
++		a01_pmic_ok = !error && (cid >> 8) == 0x57;
++		printf("A01CORE KEYS: pwrap rdata=%#x hwcid=%#x topstatus=%#x (%d) %s\n",
++		    rdata, cid, top, error,
++		    a01_pmic_ok ? "ok" : "unexpected, Power/Volume Down off");
++	}
++	if (!a01_kp_ok && !a01_pmic_ok) {
++		printf("A01CORE KEYS: no key source\n");
++		return;
++	}
++	kern_return_t kr = kernel_thread_start(a01_keys_thread, NULL, &thread);
++	if (kr == KERN_SUCCESS) {
++		thread_deallocate(thread);
++	} else {
++		printf("A01CORE KEYS: thread start failed %d\n", kr);
++	}
++}
++#endif /* ARM64_BOARD_CONFIG_A01CORE */
+diff --git a/iokit/Kernel/arm/hid/SweetHID.cpp b/iokit/Kernel/arm/hid/SweetHID.cpp
+index 61aaef9..9a85368 100644
+--- a/iokit/Kernel/arm/hid/SweetHID.cpp
++++ b/iokit/Kernel/arm/hid/SweetHID.cpp
+@@ -456,6 +456,11 @@ SweetHIDTouch::start(IOService *provider)
+ 			fLogicalW = (int)((uint64_t)lw * 2560 / lh);
+ 		}
+ 	}
++#elif defined(ARM64_BOARD_CONFIG_A01CORE)
++	/* 720x1520 panel; AppleCLCD scales the iOS canvas onto the whole panel,
++	 * so touches normalize over the panel itself. */
++	fPanelW = fLogicalW = 720;
++	fPanelH = fLogicalH = 1520;
+ #elif defined(ARM64_BOARD_CONFIG_A5XELTE)
+ 	fPanelW = fLogicalW = 1080;
+ 	fPanelH = fLogicalH = 1920;
+@@ -472,10 +477,14 @@ SweetHIDTouch::start(IOService *provider)
+ #if defined(ARM64_BOARD_CONFIG_HEROLTE)
+ 	setProperty("SurfaceWidth", (unsigned long long)(64 << 16), 32);	/* mm, 16.16 */
+ 	setProperty("SurfaceHeight", (unsigned long long)(113 << 16), 32);
++#elif defined(ARM64_BOARD_CONFIG_A01CORE)
++	/* 5.3-inch 720x1520 panel: about 58 x 122 mm. */
++	setProperty("SurfaceWidth", (unsigned long long)(58 << 16), 32);	/* mm, 16.16 */
++	setProperty("SurfaceHeight", (unsigned long long)(122 << 16), 32);
+ #else
+ 	setProperty("SurfaceWidth", (unsigned long long)(68 << 16), 32);	/* mm, 16.16 */
+ #endif
+-#if defined(ARM64_BOARD_CONFIG_HEROLTE)
++#if defined(ARM64_BOARD_CONFIG_HEROLTE) || defined(ARM64_BOARD_CONFIG_A01CORE)
+ #elif defined(ARM64_BOARD_CONFIG_A5XELTE)
+ 	setProperty("SurfaceHeight", (unsigned long long)(121 << 16), 32);
+ #else

@@ -14,3 +14,8 @@ shim/a5xelte/out4k/
 shim/a5xelte/outxnu/
 shim/herolte/out/
 *.img
+shim/a01core/out/
+*.tar.md5
+*.Image
+payload*.bin
+*.adt

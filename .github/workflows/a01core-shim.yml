@@ -1,0 +1,74 @@
+name: a01core-shim
+
+# Builds the Galaxy A01 Core loader (shim/a01core) and runs its FDT scanner
+# on a host build. The boot image itself is packed on your PC from YOUR
+# stock boot.img (tools/a01core-pack-boot.py); it is never built here.
+on:
+  workflow_dispatch:
+  push:
+    branches: [a01core]
+    paths:
+      - "shim/a01core/**"
+      - "shim/font.h"
+      - "tools/a01core-pack-boot.py"
+      - "tools/mkadt_a01core.py"
+      - ".github/workflows/a01core-shim.yml"
+
+jobs:
+  shim:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
+
+      - name: Build a01core.Image
+        run: CROSS=aarch64-linux-gnu- sh shim/a01core/build.sh
+
+      - name: Disassembly sanity (no LSE, no FP/SIMD in the loader)
+        run: |
+          aarch64-linux-gnu-objdump -d shim/a01core/out/a01core.elf > shim/a01core/out/a01core.dis
+          if grep -E '\s(cas|ldadd|ldset|ldclr|swp)[a-z]*\s' shim/a01core/out/a01core.dis; then
+            echo "::error::ARMv8.1 atomics in the loader"; exit 1; fi
+          grep -c . shim/a01core/out/a01core.dis
+
+      - name: Host test of the FDT scanner
+        run: |
+          gcc -DA01_HOST_TEST -std=gnu11 -Wall -Wextra -Werror -o host_test shim/a01core/host_test.c
+          # A minimal FDT with memory, reserved-memory and the LK framebuffer
+          # properties, as LK hands it over (values are examples).
+          cat > t.dts <<'EOF'
+          /dts-v1/;
+          /memreserve/ 0x4ff00000 0x100000;
+          / {
+            #address-cells = <2>; #size-cells = <2>;
+            memory { device_type = "memory"; reg = <0 0x40000000 0 0x80000000>; };
+            reserved-memory { #address-cells = <2>; #size-cells = <2>; ranges;
+              sec-log@4b000000 { reg = <0 0x4b000000 0 0x200000>; };
+              fb@be840000 { reg = <0 0xbe840000 0 0x17bb000>; };
+            };
+            chosen {
+              atag,videolfb-fb_base_h = <0>;
+              atag,videolfb-fb_base_l = <0xbe840000>;
+              atag,videolfb-vramSize = <0x17bb000>;
+              atag,videolfb-lcmname = "td4150_hdp_dis_vdo_a01core_lcm_drv";
+            };
+          };
+          EOF
+          sudo apt-get install -y -q device-tree-compiler
+          dtc -I dts -O dtb -o t.dtb t.dts
+          ./host_test t.dtb | tee host_test.txt
+          grep -q 'MEM 0x40000000+0x80000000' host_test.txt
+          grep -q 'RSV 0x4ff00000+0x100000' host_test.txt
+          grep -q 'fb 0xbe840000' host_test.txt
+          grep -q "conflict(0x60000000,1G)=-1" host_test.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: a01core-shim
+          path: |
+            shim/a01core/out/a01core.Image
+            shim/a01core/out/a01core.elf
