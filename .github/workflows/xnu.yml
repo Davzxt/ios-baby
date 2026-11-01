@@ -22,7 +22,7 @@ on:
         description: make -k (collect all compile errors in one run)
         default: "true"
       runner:
-        description: GitHub runner image (empty = both macos-14 and macos-15-intel)
+        description: GitHub runner image (empty = macos-15-intel; macos-14 jobs are cancelled at once since Nov 2026)
         default: ""
   push:
     branches: [main, herolte, a01core, codex/a5xelte-bringup]
@@ -50,7 +50,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: ${{ fromJSON(inputs.runner && format('["{0}"]', inputs.runner) || '["macos-14","macos-15-intel"]') }}
+        runner: ${{ fromJSON(inputs.runner && format('["{0}"]', inputs.runner) || '["macos-15-intel"]') }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     steps:

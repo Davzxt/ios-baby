@@ -26,7 +26,7 @@ permissions:
 jobs:
   root:
     if: github.event.repository.private == true
-    runs-on: macos-14
+    runs-on: macos-15-intel   # macos-14 jobs are cancelled at once (Nov 2026)
     timeout-minutes: 180
     env:
       GH_TOKEN: ${{ github.token }}
