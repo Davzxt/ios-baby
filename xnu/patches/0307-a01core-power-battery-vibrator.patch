@@ -1,0 +1,473 @@
+From 621555592145fda02d12cf54df6eb6e401875cff Mon Sep 17 00:00:00 2001
+From: a01core <a01core@localhost>
+Date: Sun, 1 Nov 2026 13:34:48 -0300
+Subject: [PATCH] 0307 a01core: PMIC battery voltage, charger detect,
+ vibration; iOS battery service
+
+---
+ bsd/conf/files                    |   1 +
+ bsd/dev/a01core_keys.c            |  34 +---
+ bsd/dev/a01core_power.c           | 268 ++++++++++++++++++++++++++++++
+ iokit/Kernel/arm/SweetBattery.cpp |  36 +++-
+ iokit/KernelConfigTables.cpp      |   2 +-
+ iokit/bsddev/IOKitBSDInit.cpp     |   2 +
+ 6 files changed, 308 insertions(+), 35 deletions(-)
+ create mode 100644 bsd/dev/a01core_power.c
+
+diff --git a/bsd/conf/files b/bsd/conf/files
+index a4b8d5f..f4bc22b 100644
+--- a/bsd/conf/files
++++ b/bsd/conf/files
+@@ -116,6 +116,7 @@ bsd/dev/a5xelte_keys.c			standard
+ bsd/dev/a5xelte_touch.c			standard
+ bsd/dev/a01core_keys.c			standard
+ bsd/dev/a01core_touch.c			standard
++bsd/dev/a01core_power.c			standard
+ bsd/dev/sweet_sample.c			standard
+ bsd/dev/sweet_keys.c			standard
+ bsd/dev/sweet_touch.c			standard
+diff --git a/bsd/dev/a01core_keys.c b/bsd/dev/a01core_keys.c
+index 155e3fa..c2fed23 100644
+--- a/bsd/dev/a01core_keys.c
++++ b/bsd/dev/a01core_keys.c
+@@ -78,40 +78,12 @@ a01_wr(vm_offset_t base, uint32_t off, uint32_t v)
+ 	*(volatile uint32_t *)(base + off) = v;
+ }
+ 
+-static int
+-pwrap_wait_fsm(uint32_t want, uint32_t *last)
+-{
+-	for (unsigned i = 0; i < 100000; i++) {
+-		*last = a01_rd(a01_pwrap, PWRAP_WACS2_RDATA);
+-		if (WACS_FSM(*last) == want) {
+-			return 0;
+-		}
+-	}
+-	return ETIMEDOUT;
+-}
+-
+-/* WACS2 16-bit read (Linux pwrap_read16 without the arbiter capability). */
++/* WACS2 16-bit read, shared with a01core_power.c under its lock. */
++extern int a01core_pmic_read(uint32_t adr, uint16_t *val);
+ static int
+ pwrap_read16(uint32_t adr, uint16_t *val)
+ {
+-	uint32_t r;
+-	if (pwrap_wait_fsm(WACS_FSM_IDLE, &r)) {
+-		if (WACS_FSM(r) != WACS_FSM_WFVLDCLR) {
+-			return ETIMEDOUT;
+-		}
+-		/* A previous read was never acknowledged. */
+-		a01_wr(a01_pwrap, PWRAP_WACS2_VLDCLR, 1);
+-		if (pwrap_wait_fsm(WACS_FSM_IDLE, &r)) {
+-			return ETIMEDOUT;
+-		}
+-	}
+-	a01_wr(a01_pwrap, PWRAP_WACS2_CMD, (adr >> 1) << 16);
+-	if (pwrap_wait_fsm(WACS_FSM_WFVLDCLR, &r)) {
+-		return ETIMEDOUT;
+-	}
+-	*val = (uint16_t)(r & 0xffffu);
+-	a01_wr(a01_pwrap, PWRAP_WACS2_VLDCLR, 1);
+-	return 0;
++	return a01core_pmic_read(adr, val);
+ }
+ 
+ static uint32_t
+diff --git a/bsd/dev/a01core_power.c b/bsd/dev/a01core_power.c
+new file mode 100644
+index 0000000..b50fc5c
+--- /dev/null
++++ b/bsd/dev/a01core_power.c
+@@ -0,0 +1,268 @@
++/*
++ * Galaxy A01 Core (MT6739 + MT6357 PMIC): battery voltage, charger detect and the
++ * vibration motor, all through the PMIC wrapper (pwrap WACS2).
++ *
++ * Register facts, from the SM-A013 GPL kernel (A013GXXU4AVF4):
++ *   pwrap WACS2 CMD/RDATA/VLDCLR 0xc20/0xc24/0xc28 (pwrap_hal_v1.c, MT6357 build):
++ *     CMD = write << 31 | (adr >> 1) << 16 | wdata; RDATA [15:0] data, [18:16] FSM,
++ *     [21] INIT_DONE. FSM 0 idle, 6 wait-for-valid-clear.
++ *   MT6357 (include/linux/mfd/mt6357/registers.h):
++ *     TOPSTATUS 0x24: bit 2 CHRDET_DEB (charger present).
++ *     AUXADC_RQST0 0x110e bit 0 requests BATADC; AUXADC_ADC0 0x1088: [14:0] value,
++ *     [15] ready (drivers/iio/adc/mt635x-auxadc.c, 15-bit, VOLT_FULL 1800 mV);
++ *     BATSNS ratio 3/1 (arch/arm/boot/dts/mt6357.dtsi batadc resistance-ratio).
++ *     LDO_VIBR_CON0 0x1b08 bit 0 RG_LDO_VIBR_EN (drivers/misc/mediatek/vibrator/mt6739:
++ *     the stock driver only toggles this bit, it does not touch VIBR_VOSEL).
++ *
++ * The A01 Core's real fuel gauge is the Samsung S2MU005 on I2C; until an MT6739 I2C
++ * driver exists, the battery level is estimated from the PMIC's battery voltage.
++ *
++ * Boot-args: a01vib=N pulses the motor for N ms at boot (validation); a01power=0 off.
++ */
++#if defined(ARM64_BOARD_CONFIG_A01CORE)
++#include <sys/param.h>
++#include <sys/systm.h>
++#include <sys/errno.h>
++#include <kern/clock.h>
++#include <kern/thread.h>
++#include <kern/sched_prim.h>
++#include <kern/locks.h>
++#include <machine/machine_routines.h>
++#include <pexpert/pexpert.h>
++
++extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
++extern void delay(int usec);
++
++int a01core_power_init(void);
++int a01core_batt_read(unsigned *mv, int *charger);
++void a01core_vibrate(int on);
++void a01core_vibrate_ms(unsigned ms);
++void a01core_power_probe(void);
++int a01core_pmic_read(uint32_t adr, uint16_t *val);
++
++#define PWRAP_PA             0x1000d000u
++#define PWRAP_WACS2_CMD      0xc20u
++#define PWRAP_WACS2_RDATA    0xc24u
++#define PWRAP_WACS2_VLDCLR   0xc28u
++#define WACS_FSM(v)          (((v) >> 16) & 7u)
++#define WACS_INIT_DONE(v)    (((v) >> 21) & 1u)
++#define WACS_FSM_IDLE        0u
++#define WACS_FSM_WFVLDCLR    6u
++
++#define MT6357_HWCID         0x0008u
++#define MT6357_TOPSTATUS     0x0024u
++#define TOP_CHRDET           (1u << 2)
++#define MT6357_AUXADC_ADC0   0x1088u
++#define MT6357_AUXADC_RQST0  0x110eu
++#define AUXADC_RDY           (1u << 15)
++#define MT6357_LDO_VIBR_CON0 0x1b08u
++#define VIBR_EN              (1u << 0)
++
++static vm_offset_t g_pwrap;
++static int g_ok;
++static LCK_GRP_DECLARE(a01_power_grp, "a01core_power");
++static LCK_MTX_DECLARE(a01_power_lock, &a01_power_grp);
++
++static uint32_t
++prd(uint32_t o)
++{
++	uint32_t v = *(volatile uint32_t *)(g_pwrap + o);
++	__asm__ volatile ("dmb oshld" ::: "memory");
++	return v;
++}
++
++static void
++pwr(uint32_t o, uint32_t v)
++{
++	__asm__ volatile ("dmb oshst" ::: "memory");
++	*(volatile uint32_t *)(g_pwrap + o) = v;
++	__asm__ volatile ("dsb osh" ::: "memory");
++}
++
++static int
++wait_fsm(uint32_t want, uint32_t *last)
++{
++	for (unsigned i = 0; i < 10000; i++) {
++		*last = prd(PWRAP_WACS2_RDATA);
++		if (WACS_FSM(*last) == want) {
++			return 0;
++		}
++		delay(1);
++	}
++	return ETIMEDOUT;
++}
++
++static int
++wait_idle(void)
++{
++	uint32_t r;
++	if (wait_fsm(WACS_FSM_IDLE, &r) == 0) {
++		return 0;
++	}
++	if (WACS_FSM(r) == WACS_FSM_WFVLDCLR) {   /* a read nobody acknowledged */
++		pwr(PWRAP_WACS2_VLDCLR, 1);
++		return wait_fsm(WACS_FSM_IDLE, &r);
++	}
++	return ETIMEDOUT;
++}
++
++static int
++pmic_read(uint32_t adr, uint16_t *val)
++{
++	uint32_t r;
++	if (wait_idle()) {
++		return ETIMEDOUT;
++	}
++	pwr(PWRAP_WACS2_CMD, (adr >> 1) << 16);
++	if (wait_fsm(WACS_FSM_WFVLDCLR, &r)) {
++		return ETIMEDOUT;
++	}
++	*val = (uint16_t)(r & 0xffffu);
++	pwr(PWRAP_WACS2_VLDCLR, 1);
++	return 0;
++}
++
++static int
++pmic_write(uint32_t adr, uint16_t val)
++{
++	if (wait_idle()) {
++		return ETIMEDOUT;
++	}
++	pwr(PWRAP_WACS2_CMD, (1u << 31) | ((adr >> 1) << 16) | val);
++	return wait_idle();
++}
++
++int
++a01core_power_init(void)
++{
++	lck_mtx_lock(&a01_power_lock);
++	if (!g_ok) {
++		if (!g_pwrap) {
++			g_pwrap = ml_io_map(PWRAP_PA, 0x1000);
++		}
++		uint16_t cid = 0;
++		if (g_pwrap && WACS_INIT_DONE(prd(PWRAP_WACS2_RDATA)) &&
++		    pmic_read(MT6357_HWCID, &cid) == 0 && (cid >> 8) == 0x57) {
++			g_ok = 1;
++		}
++		printf("A01CORE POWER: pwrap %s, PMIC id %#x%s\n", g_pwrap ? "mapped" : "MAP FAILED",
++		    cid, g_ok ? "" : " (not MT6357: disabled)");
++	}
++	lck_mtx_unlock(&a01_power_lock);
++	return g_ok ? 0 : ENODEV;
++}
++
++/* Locked PMIC read for the other A01 Core drivers (keys): one WACS2 user at a time. */
++int
++a01core_pmic_read(uint32_t adr, uint16_t *val)
++{
++	if (!g_ok && a01core_power_init() != 0) {
++		return ENODEV;
++	}
++	lck_mtx_lock(&a01_power_lock);
++	int error = pmic_read(adr, val);
++	lck_mtx_unlock(&a01_power_lock);
++	return error;
++}
++
++/* Battery voltage in mV (BATSNS, 3:1 divider) and charger presence. */
++int
++a01core_batt_read(unsigned *mv, int *charger)
++{
++	if (!g_ok) {
++		return ENODEV;
++	}
++	int error = 0;
++	uint16_t v = 0, top = 0;
++	lck_mtx_lock(&a01_power_lock);
++	error = pmic_write(MT6357_AUXADC_RQST0, 1u << 0);
++	for (unsigned i = 0; !error && i < 200; i++) {
++		error = pmic_read(MT6357_AUXADC_ADC0, &v);
++		if (!error && (v & AUXADC_RDY)) {
++			break;
++		}
++		delay(50);
++	}
++	if (!error && !(v & AUXADC_RDY)) {
++		error = ETIMEDOUT;
++	}
++	if (!error) {
++		error = pmic_read(MT6357_TOPSTATUS, &top);
++	}
++	lck_mtx_unlock(&a01_power_lock);
++	if (error) {
++		return error;
++	}
++	*mv = (unsigned)(((uint32_t)(v & 0x7fffu) * 3u * 1800u) >> 15);
++	*charger = (top & TOP_CHRDET) != 0;
++	return 0;
++}
++
++void
++a01core_vibrate(int on)
++{
++	if (!g_ok) {
++		return;
++	}
++	uint16_t c;
++	lck_mtx_lock(&a01_power_lock);
++	if (pmic_read(MT6357_LDO_VIBR_CON0, &c) == 0) {
++		c = on ? (uint16_t)(c | VIBR_EN) : (uint16_t)(c & ~VIBR_EN);
++		(void)pmic_write(MT6357_LDO_VIBR_CON0, c);
++	}
++	lck_mtx_unlock(&a01_power_lock);
++}
++
++static int vib_evt;
++
++static void
++vib_sleep(unsigned ms)
++{
++	uint64_t deadline;
++	clock_interval_to_deadline(ms, NSEC_PER_MSEC, &deadline);
++	(void)assert_wait_deadline(&vib_evt, THREAD_UNINT, deadline);
++	thread_block(THREAD_CONTINUE_NULL);
++}
++
++/* Blocking pulse; call from a thread that may sleep. */
++void
++a01core_vibrate_ms(unsigned ms)
++{
++	a01core_vibrate(1);
++	vib_sleep(MIN(ms, 5000u));
++	a01core_vibrate(0);
++}
++
++static void
++power_probe_thread(void *arg, __unused wait_result_t wres)
++{
++	unsigned pulse = (unsigned)(uintptr_t)arg;
++	unsigned mv;
++	int charger;
++	if (pulse) {
++		printf("A01CORE POWER: vibration test %u ms\n", pulse);
++		a01core_vibrate_ms(pulse);
++	}
++	if (a01core_batt_read(&mv, &charger) == 0) {
++		printf("A01CORE POWER: battery %u mV, charger %s\n", mv, charger ? "present" : "absent");
++	} else {
++		printf("A01CORE POWER: battery ADC read failed\n");
++	}
++}
++
++void
++a01core_power_probe(void)
++{
++	int enabled = 1;
++	unsigned pulse = 0;
++	(void)PE_parse_boot_argn("a01power", &enabled, sizeof(enabled));
++	(void)PE_parse_boot_argn("a01vib", &pulse, sizeof(pulse));
++	if (!enabled || a01core_power_init() != 0) {
++		return;
++	}
++	thread_t thread;
++	if (kernel_thread_start(power_probe_thread, (void *)(uintptr_t)pulse, &thread) == KERN_SUCCESS) {
++		thread_deallocate(thread);
++	}
++}
++#endif /* ARM64_BOARD_CONFIG_A01CORE */
+diff --git a/iokit/Kernel/arm/SweetBattery.cpp b/iokit/Kernel/arm/SweetBattery.cpp
+index 6d8a0fd..866e645 100644
+--- a/iokit/Kernel/arm/SweetBattery.cpp
++++ b/iokit/Kernel/arm/SweetBattery.cpp
+@@ -4,7 +4,7 @@
+  * SOC is an UNCALIBRATED estimate, not a replacement for the Linux QG algo.
+  * See report.md for binary evidence, register provenance and integration.
+  */
+-#if defined(ARM64_BOARD_CONFIG_SWEET) || defined(ARM64_BOARD_CONFIG_HEROLTE)
++#if defined(ARM64_BOARD_CONFIG_SWEET) || defined(ARM64_BOARD_CONFIG_HEROLTE) || defined(ARM64_BOARD_CONFIG_A01CORE)
+ #include <device/device_types.h> /* io_buf_ptr_t for private OSKext headers */
+ #include <IOKit/IOLib.h>
+ #include <IOKit/IOWorkLoop.h>
+@@ -18,6 +18,11 @@ extern "C" int herolte_fg_init(void);
+ extern "C" int herolte_fg_read(unsigned *percent, unsigned *mv, int *ma,
+     unsigned *rem_mah, unsigned *full_mah);
+ #define BATTERY_DESIGN_MAH 3000u        /* SM-G930F EB-BG930ABE */
++#elif defined(ARM64_BOARD_CONFIG_A01CORE)
++/* bsd/dev/a01core_power.c: MT6357 BATSNS voltage + charger detect over pwrap. */
++extern "C" int a01core_power_init(void);
++extern "C" int a01core_batt_read(unsigned *mv, int *charger);
++#define BATTERY_DESIGN_MAH 3000u        /* SM-A013 EB-BA013ABY, 3000 mAh */
+ #else
+ /* bsd/dev/sweet_spmi.c */
+ extern "C" int sweet_spmi_init(void);
+@@ -165,6 +170,8 @@ SweetBattery::publish(unsigned percent, unsigned mv, int ma, bool external,
+ 		IOLog("SWEET BATTERY: %s, %u%% %umV external=%d charging=%d\n",
+ #if defined(ARM64_BOARD_CONFIG_HEROLTE)
+ 		    measured ? "MAX77854 fuel gauge" : "static fallback",
++#elif defined(ARM64_BOARD_CONFIG_A01CORE)
++		    measured ? "MT6357 BATSNS / estimated SOC" : "static fallback",
+ #else
+ 		    measured ? "PM6150 / estimated SOC" : "static fallback",
+ #endif
+@@ -173,7 +180,7 @@ SweetBattery::publish(unsigned percent, unsigned mv, int ma, bool external,
+ 	}
+ }
+ 
+-#if !defined(ARM64_BOARD_CONFIG_HEROLTE)
++#if !defined(ARM64_BOARD_CONFIG_HEROLTE) && !defined(ARM64_BOARD_CONFIG_A01CORE)
+ /* Keep the proven single-byte observer command. Read two matching whole
+  * words to reject most torn ADC samples without writing the QG HOLD bit.
+  * This is a bounded consistency check, not a hardware snapshot guarantee. */
+@@ -196,7 +203,9 @@ SweetBattery::readWord(unsigned address, uint16_t *value)
+ 	}
+ 	return false;
+ }
++#endif
+ 
++#if !defined(ARM64_BOARD_CONFIG_HEROLTE)
+ unsigned
+ SweetBattery::estimatePercent(unsigned mv)
+ {
+@@ -239,6 +248,23 @@ SweetBattery::poll(void)
+ 	}
+ 	publish(percent, mv, ma, charging, charging, charging, false, true, true);
+ }
++#elif defined(ARM64_BOARD_CONFIG_A01CORE)
++void
++SweetBattery::poll(void)
++{
++	/* Voltage-derived estimate (no S2MU005 fuel gauge yet): unloaded OCV curve,
++	 * reads high while charging. No current measurement. */
++	unsigned mv = 0;
++	int charger = 0;
++	if (!fReal || a01core_batt_read(&mv, &charger) != 0 || mv < 2500 || mv > 4600) {
++		publish(100, 0, 0, true, true, false, false, false, false);
++		return;
++	}
++	unsigned percent = estimatePercent(mv);
++	bool external = charger != 0;
++	publish(percent, mv, 0, external, external, external && percent < 100,
++	    external && percent >= 100, true, false);
++}
+ #else
+ void
+ SweetBattery::poll(void)
+@@ -303,6 +329,10 @@ SweetBattery::start(IOService *provider)
+ #if defined(ARM64_BOARD_CONFIG_HEROLTE)
+ 	/* Default on; herofg=0 keeps the static fallback. */
+ 	fReal = herolte_fg_init() == 0;
++#elif defined(ARM64_BOARD_CONFIG_A01CORE)
++	int real = 1;
++	(void)PE_parse_boot_argn("a01battery", &real, sizeof(real));
++	fReal = real == 1 && a01core_power_init() == 0;
+ #else
+ 	int real = 0;
+ 	(void)PE_parse_boot_argn("sweetbattery", &real, sizeof(real));
+@@ -359,4 +389,4 @@ SweetBattery::free(void)
+ 	OSSafeReleaseNULL(fLoop);
+ 	IOPMPowerSource::free();
+ }
+-#endif /* ARM64_BOARD_CONFIG_SWEET || ARM64_BOARD_CONFIG_HEROLTE */
++#endif /* ARM64_BOARD_CONFIG_SWEET || ARM64_BOARD_CONFIG_HEROLTE || ARM64_BOARD_CONFIG_A01CORE */
+diff --git a/iokit/KernelConfigTables.cpp b/iokit/KernelConfigTables.cpp
+index d1099ff..f9e66c6 100644
+--- a/iokit/KernelConfigTables.cpp
++++ b/iokit/KernelConfigTables.cpp
+@@ -89,7 +89,7 @@ const char * gIOKernelConfigTables =
+     "     'IOProviderClass' = IOResources;"
+     "     'IOMatchCategory' = SweetHIDTouch;"
+     "   },"
+-#if !defined(ARM64_BOARD_CONFIG_A5XELTE) || defined(ARM64_BOARD_CONFIG_HEROLTE)
++#if !defined(ARM64_BOARD_CONFIG_A5XELTE) || defined(ARM64_BOARD_CONFIG_HEROLTE) || defined(ARM64_BOARD_CONFIG_A01CORE)
+     "   {"
+     "     'IOClass'         = SweetBattery;"
+     "     'IOProviderClass' = IOResources;"
+diff --git a/iokit/bsddev/IOKitBSDInit.cpp b/iokit/bsddev/IOKitBSDInit.cpp
+index e3cafe8..1480619 100644
+--- a/iokit/bsddev/IOKitBSDInit.cpp
++++ b/iokit/bsddev/IOKitBSDInit.cpp
+@@ -779,6 +779,8 @@ IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
+ 	{
+ 	extern void a01core_keys_init(void);
+ 	extern void a01core_touch_probe(void);
++	extern void a01core_power_probe(void);
++	a01core_power_probe();
+ 	a01core_keys_init();
+ 	a01core_touch_probe();
+ 	}
+-- 
+2.55.0.windows.5
+
