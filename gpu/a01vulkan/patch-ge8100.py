@@ -11,6 +11,11 @@ import pathlib, re, sys
 mesa = pathlib.Path(sys.argv[1])
 info = mesa / "src/imagination/common/device_info"
 src = (info / "ge8300.h").read_text()
+# keep only the first device (22.67.54.30): ge8300.h also describes 22.68.54.30 and 22.102.54.38
+lines = src.splitlines(keepends=True)
+cut = next(i for i, l in enumerate(lines) if "pvr_device_enhancements" in l and i > 0
+           and "22_68_54_30" in "".join(lines[i:i + 2]))
+src = "".join(lines[:cut]) + "\n#endif\n"
 ge = src.replace("GE8300_H", "GE8100_H").replace('"GE8300"', '"GE8100"')
 ge = ge.replace("22_V_54_30", "22_V_21_16").replace("22_67_54_30", "22_49_21_16")
 ge = ge.replace("0x22054030", "0x22021016")
