@@ -53,3 +53,6 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
   `userdata.img` do HakiOS gravado cru numa faixa errada do eMMC (~0x27EBC000–0x2AC30000):
   `tee1` inteiro e o início do `super` sobrescritos. Relatório em
   `C:\A01CORE_RECOVERY\CLAUDE_LOGS`.
+- **Aparelho do usuario recuperado (01/11/2026, 11:28):** tee1 e super stock regravados e
+  conferidos por leitura de volta; depois de tirar a bateria o aparelho saiu do BROM, o LK
+  enumerou como Samsung 04E8:685D e o usuario confirmou que ligou.
