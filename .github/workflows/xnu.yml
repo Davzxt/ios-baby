@@ -28,6 +28,7 @@ on:
     branches: [main, herolte, a01core, codex/a5xelte-bringup]
     paths:
       - "xnu/patches/**"
+      - "gpu/ddk-1.11/**"
       - ".github/workflows/xnu.yml"
 
 concurrency:
