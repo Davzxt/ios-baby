@@ -1020,7 +1020,7 @@ PVRSRV_ERROR PDumpTransition(PDUMP_CONNECTION_DATA *psPDumpConnectionData, PDUMP
 	return PVRSRV_OK;
 }
 
-	#if defined LINUX || defined GCC_IA32 || defined GCC_ARM || defined __QNXNTO__ || defined(INTEGRITY_OS)
+	#if defined LINUX || defined GCC_IA32 || defined GCC_ARM || defined __QNXNTO__ || defined(INTEGRITY_OS) || defined(PVRSRV_A01_XNU)
 		#define PDUMPINIT	PDumpInitCommon
 		#define PDUMPDEINIT(args...)
 		#define PDUMPREG32(args...)

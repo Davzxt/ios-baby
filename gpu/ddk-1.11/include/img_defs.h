@@ -293,6 +293,12 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 		#ifndef USE_CODE
 			#define IMG_ABORT() printf("IMG_ABORT was called.\n")
 		#endif
+	#elif defined(PVRSRV_A01_XNU)
+		#define IMG_CALLCONV
+		#define C_CALLCONV
+		#define IMG_INTERNAL    __attribute__((visibility("hidden")))
+		#define IMG_EXPORT      __attribute__((visibility("default")))
+		#define IMG_RESTRICT    __restrict__
 	#else
 		#error("define an OS")
 	#endif

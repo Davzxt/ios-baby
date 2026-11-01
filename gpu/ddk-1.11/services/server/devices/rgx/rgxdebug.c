@@ -84,7 +84,9 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include "info_page.h"
 #include "rgx_bvnc_defs_km.h"
 
+#if !defined(PVRSRV_A01_XNU)
 #include "mtk_version.h"
+#endif
 
 #define PVR_DUMP_DRIVER_INFO(x, y)														\
 	PVR_DUMPDEBUG_LOG("%s info: %d.%d @ %8d (%s) build options: 0x%08x",				\

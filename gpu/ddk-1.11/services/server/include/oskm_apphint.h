@@ -42,14 +42,22 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include "img_defs.h"
 #if defined(LINUX)
 #include "km_apphint.h"
-#else
+#elif !defined(PVRSRV_A01_XNU)
 #include "services_client_porting.h"
 #endif
 #if !defined(__OSKM_APPHINT_H__)
 #define __OSKM_APPHINT_H__
 
 
-#if defined(LINUX) && !defined(DOXYGEN)
+#if defined(PVRSRV_A01_XNU)
+/* A01 (XNU): no app hint store; every hint takes its build default. */
+#define OSGetKMAppHintUINT32(state, name, appHintDefault, value) (*(value) = *(appHintDefault), IMG_TRUE)
+#define OSGetKMAppHintUINT64(state, name, appHintDefault, value) (*(value) = *(appHintDefault), IMG_TRUE)
+#define OSGetKMAppHintBOOL(state, name, appHintDefault, value)   (*(value) = *(appHintDefault), IMG_TRUE)
+#define OSGetKMAppHintSTRING(state, name, appHintDefault, buffer, size) 	(OSStringLCopy((buffer), *(appHintDefault), (size)), IMG_TRUE)
+#define OSCreateKMAppHintState(state) PVR_UNREFERENCED_PARAMETER(state)
+#define OSFreeKMAppHintState(state)   PVR_UNREFERENCED_PARAMETER(state)
+#elif defined(LINUX) && !defined(DOXYGEN)
 static INLINE IMG_UINT os_get_km_apphint_UINT32(void *state, APPHINT_ID id, IMG_UINT32 *pAppHintDefault, IMG_UINT32 *pVal) {
 	return !pvr_apphint_get_uint32(id, pVal);
 }

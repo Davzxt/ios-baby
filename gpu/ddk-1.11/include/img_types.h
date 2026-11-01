@@ -64,6 +64,13 @@ extern "C" {
 #if defined(_MSC_VER)
 	#include <stdbool.h>		/* bool */
 	#include "msvc_types.h"
+#elif defined(PVRSRV_A01_XNU)
+	/* XNU kernel (Galaxy A01 Core): freestanding C99 headers, formats from env/xnu */
+	#include <stddef.h>
+	#include <stdint.h>
+	#include <stdbool.h>
+	#include <limits.h>
+	#include "xnu_types.h"
 #elif defined(LINUX) && defined(__KERNEL__)
 	#include <linux/types.h>
 	#include "kernel_types.h"

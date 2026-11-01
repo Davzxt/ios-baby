@@ -45,7 +45,9 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #if !defined(_PHYSMEM_DMABUF_H_)
 #define _PHYSMEM_DMABUF_H_
 
+#if !defined(PVRSRV_A01_XNU) /* A01: Linux/MediaTek only */
 #include <linux/dma-buf.h>
+#endif
 
 #if defined(__KERNEL__) && defined(LINUX) && !defined(__GENKSYMS__)
 #define __pvrsrv_defined_struct_enum__

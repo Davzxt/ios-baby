@@ -1459,7 +1459,7 @@ typedef spinlock_t *POS_SPINLOCK;
 #define OSSpinLockAcquire(_pLock, _pFlags) {unsigned long *p = (unsigned long *)_pFlags; spin_lock_irqsave(_pLock, *p);}
 #define OSSpinLockRelease(_pLock, _flags)  {spin_unlock_irqrestore(_pLock, _flags);}
 
-#elif defined(LINUX) || defined(__QNXNTO__) || defined (INTEGRITY_OS)
+#elif defined(LINUX) || defined(__QNXNTO__) || defined (INTEGRITY_OS) || defined(PVRSRV_A01_XNU)
 /* User-mode unit tests use these definitions on Linux */
 
 PVRSRV_ERROR OSWRLockCreate(POSWR_LOCK *ppsLock);

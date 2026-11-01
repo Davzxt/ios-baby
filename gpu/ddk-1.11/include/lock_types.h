@@ -79,6 +79,8 @@ typedef struct _OSWR_LOCK_ {
 	 * still have to be shared. This is one such case.
 	 */
 	typedef struct _OS_ATOMIC {IMG_INT32 counter;} ATOMIC_T;
+#elif defined(PVRSRV_A01_XNU)
+	typedef struct _OS_ATOMIC {IMG_INT32 counter;} ATOMIC_T;
 #elif defined(INTEGRITY_OS)
 	/* Only lower 32bits are used in OS ATOMIC APIs to have consistent behaviour across all OS */
 	typedef struct _OS_ATOMIC {IMG_UINT64 counter;} ATOMIC_T;

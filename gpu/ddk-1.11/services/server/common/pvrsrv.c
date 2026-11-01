@@ -90,7 +90,9 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include "rgxfwutils.h"
 #endif
 
+#if !defined(PVRSRV_A01_XNU) /* A01: Linux/MediaTek only */
 #include "mtk_pp.h"
+#endif
 #if defined(PVRSRV_ENABLE_GPU_MEMORY_INFO)
 #include "ri_server.h"
 #endif

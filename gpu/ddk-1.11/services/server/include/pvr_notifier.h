@@ -141,7 +141,11 @@ Debug Notifier Interface
  * is also required as a local variable to serve as a file identifier for the
  * printf function if required.
  */
+#if !defined(PVRSRV_A01_XNU) /* A01: Linux/MediaTek only */
 #include "mtk_pp.h"
+#else
+#include "a01_mtk_stubs.h"
+#endif
 
 #if defined(MTK_DEBUG_PROC_PRINT)
 #define _MTKPP_GPULOG_FW(...) MTKPP_LOG(g_use_id, __VA_ARGS__)
