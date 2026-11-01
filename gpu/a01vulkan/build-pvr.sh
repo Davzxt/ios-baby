@@ -1,5 +1,5 @@
 #!/bin/bash
-# Cross-build Mesa's PowerVR Vulkan driver ("pvr", Rogue) for the Galaxy A01 Core's iOS 16
+# Cross-build the PowerVR Vulkan driver (Mesa pvr on DDK 1.11, img-pvr) for the Galaxy A01 Core's iOS 16
 # userland (GE8100). Reuses the S7 recipe (gpu/mesa): Darwin patches, libdrm headers.
 #   build-pvr.sh WORK OUT
 set -euo pipefail
@@ -14,11 +14,16 @@ SDK=$(xcrun --sdk iphoneos --show-sdk-path)
 CC_IOS="xcrun --sdk iphoneos clang -arch arm64 -miphoneos-version-min=$MIN_IOS -isysroot $SDK"
 
 cd "$WORK"
-[ -d mesa ] || git clone -q --depth 1 --branch "$MESA_TAG" https://gitlab.freedesktop.org/mesa/mesa.git mesa
+# Mesa pvr ported to the DDK 1.11 kernel interface (MIT): github.com/JimVulkan/img-pvr
+IMGPVR_SHA=${IMGPVR_SHA:-9e1c0279d6c0a3e6419c5818a82ae6903e0d921c}
+if [ ! -d mesa ]; then
+  git init -q mesa && git -C mesa fetch -q --depth 1 https://github.com/JimVulkan/img-pvr "$IMGPVR_SHA" && git -C mesa checkout -q FETCH_HEAD
+fi
 [ -d libdrm ] || git clone -q --depth 1 --branch "$LIBDRM_TAG" https://gitlab.freedesktop.org/mesa/drm.git libdrm
 python3 "$MESA/patch-mesa.py" mesa || echo "patch-mesa.py: some S7 patches did not apply to $MESA_TAG"
 python3 "$HERE/patch-ge8100.py" mesa
 python3 "$HERE/patch-pvr-darwin.py" mesa
+cp -R "$HERE/compat/." mesa/include/   # sys/sysmacros.h, linux/const.h, linux/types.h for Darwin
 
 # libdrm: only headers and link symbols are needed here (the A01 kernel interface is the
 # pvr "srv" winsys, which talks to the GE8100 driver directly, not through DRM).
