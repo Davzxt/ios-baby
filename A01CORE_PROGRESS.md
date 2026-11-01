@@ -84,3 +84,16 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
   (i2c1 0x3b) alimenta o SweetBattery; identidades do AW8896 (i2c4 0x34) e LIS2DS (gpio 0x1d).
   CI: kernel 0300-0308 compilado (run 41328651620). Nao testado no aparelho.
 - Auditoria `docs/A01CORE_DRIVER_AUDIT.md`: evidencias da `vendor` stock e do REA.
+
+## 2026-11-01 (noite): **o iOS 16 bootou no SM-A013M**
+
+- Odin: `AP_IOS16_USERDATA.tar.md5` (LZ4 com o cabecalho Samsung: FLG 0x6c, BD 0x60, content size;
+  a versao com FLG 0x44/BD 0x70 deu "LZ4 is invalid") + boot 0300-0308. PASS em 8 min. Primeiro
+  boot longo no logo da Apple; depois o usuario relatou: "O IOS BOOTOU".
+- RAM: o LK reserva `reserve-memory-dram_r{0,1}_dummy_read` (leitura do DRAMC), firmware seguro,
+  logs e modem. Experimento de 1 GiB: XNU em 0x80000000+1023 MiB atravessando o dummy-read do
+  rank 1 (0x9fff0000+64K), superficie escalada em 0x78000000 (0309), shim mostra os nomes das
+  reservas. Kernel/shim compilados (runs 41335809665/41335809692); nao testado.
+- GPU: BVNC do GE8100 = **22.49.21.16** (`rgx_bvnc_table_km.h` do DDK 1.11 da Samsung; config
+  22.V.21.16: 1 cluster, firmware MIPS). Mesa pvr nao tem esse BVNC; o fork JimVulkan/img-pvr roda
+  o Vulkan aberto sobre o DDK 1.11 de kernel num GE8320 (22.87.104.18).
