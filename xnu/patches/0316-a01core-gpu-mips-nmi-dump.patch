@@ -1,0 +1,52 @@
+From 7e5e6592997b3337c5d7398074782061ffedd183 Mon Sep 17 00:00:00 2001
+From: a01core <a01core@localhost>
+Date: Sun, 1 Nov 2026 18:06:25 -0300
+Subject: [PATCH] 0316 a01core: NMI the GE8100 MIPS and print its exception
+ state
+
+---
+ bsd/dev/a01core_gpu.c | 28 ++++++++++++++++++++++++++++
+ 1 file changed, 28 insertions(+)
+
+diff --git a/bsd/dev/a01core_gpu.c b/bsd/dev/a01core_gpu.c
+index 5b1d524..df9cd16 100644
+--- a/bsd/dev/a01core_gpu.c
++++ b/bsd/dev/a01core_gpu.c
+@@ -292,6 +292,34 @@ gpu_fw_boot(vm_offset_t rgx)
+ 	printf("A01CORE GPU FW: loaded %llu bytes at %#llx; boot stage %#x, mips exc %#llx irq %#llx%s\n",
+ 	    len, pa, stage, rd64(rgx, RGX_CR_MIPS_EXCEPTION_STATUS), rd64(rgx, RGX_CR_MIPS_WRAPPER_IRQ_STA),
+ 	    stage ? " -> FIRMWARE RUNNING" : " -> firmware did not report");
++	if (!stage) {
++		/* rgxdebug.c _RGXMipsExtraDebug: NMI the MIPS and let its handler dump its state into
++		 * BOOT_DATA + 0x100 (sync flag at word 0, RGX_MIPS_STATE from word 1). */
++		volatile uint32_t *nmi = (volatile uint32_t *)(va + bdata_off + 0x100);
++		nmi[0] = 0;
++		flush_dcache(va + bdata_off, 4096, FALSE);
++		*(volatile uint32_t *)(rgx + 0x08B8) = 1;            /* WRAPPER_NMI_ENABLE */
++		*(volatile uint32_t *)(rgx + 0x08C0) = 1;            /* WRAPPER_NMI_EVENT trigger */
++		__asm__ volatile ("dsb osh" ::: "memory");
++		unsigned t;
++		for (t = 0; t < 1000 && !(rd64(rgx, RGX_CR_MIPS_EXCEPTION_STATUS) & 0x10); t++) {
++			delay(100);
++		}
++		uint32_t taken = (uint32_t)rd64(rgx, RGX_CR_MIPS_EXCEPTION_STATUS);
++		nmi[0] = 1;                                          /* let the handler continue */
++		flush_dcache(va + bdata_off, 4096, FALSE);
++		for (t = 0; t < 1000 && (rd64(rgx, RGX_CR_MIPS_EXCEPTION_STATUS) & 0x1); t++) {
++			delay(100);
++		}
++		flush_dcache(va + bdata_off, 4096, FALSE);
++		printf("A01CORE GPU FW: NMI exc %#x->%#llx; err %#x errEPC %#x status %#x cause %#x bad %#x EPC %#x SP %#x badinstr %#x unmapped %#x\n",
++		    taken, rd64(rgx, RGX_CR_MIPS_EXCEPTION_STATUS), nmi[1], nmi[2], nmi[3], nmi[4], nmi[5], nmi[6],
++		    nmi[7], nmi[10], nmi[11]);
++		*(volatile uint32_t *)(rgx + 0x08B8) = 0;
++		printf("A01CORE GPU FW: pa %#llx boot %#llx bdata %#llx exc %#llx pt %#llx pte0 %#x\n",
++		    pa, pa + boot_off, pa + bdata_off, pa + exc_off, pt_pa, pt[0]);
++		delay(15 * 1000 * 1000);                             /* 15 s on screen to photograph */
++	}
+ }
+ 
+ void
+-- 
+2.55.0.windows.5
+
