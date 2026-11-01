@@ -17,11 +17,8 @@ if old in t and "A01: DRM format modifiers" not in t:
 # (a global -undefined dynamic_lookup would fool meson's compiler checks).
 f = mesa / "src/imagination/vulkan/meson.build"
 t = f.read_text()
-old = "  link_args : [
-    vulkan_icd_link_args,"
+old = "  link_args : [\n    vulkan_icd_link_args,"
 if old in t and "dynamic_lookup" not in t:
-    t = t.replace(old, "  link_args : [
-    '-Wl,-undefined,dynamic_lookup',
-    vulkan_icd_link_args,", 1)
+    t = t.replace(old, "  link_args : [\n    '-Wl,-undefined,dynamic_lookup',\n    vulkan_icd_link_args,", 1)
     f.write_text(t)
     print("meson.build: driver links with -undefined dynamic_lookup")
