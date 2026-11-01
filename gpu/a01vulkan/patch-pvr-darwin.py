@@ -22,3 +22,34 @@ if old in t and "dynamic_lookup" not in t:
     t = t.replace(old, "  link_args : [\n    '-Wl,-undefined,dynamic_lookup',\n    vulkan_icd_link_args,", 1)
     f.write_text(t)
     print("meson.build: driver links with -undefined dynamic_lookup")
+
+# PMR CPU mappings: Linux mmaps the render node at offset = handle; on iOS the A01CoreGPU user
+# client maps the PMR (a01drm_map_pmr in gpu/a01vulkan/a01drm.c). The fixed address hint is not
+# honoured: the kernel picks the address.
+f = mesa / "src/imagination/vulkan/winsys/pvrsrvkm/pvr_srv_bo.c"
+t = f.read_text()
+old = """   result = pvr_mmap(addr,
+                     bo->size,
+                     prot,
+                     MAP_SHARED,
+                     ws->render_fd,
+                     (off_t)srv_bo->pmr << ws->log2_page_size,
+                     &bo->map);
+"""
+new = """#if defined(__APPLE__)
+   {
+      extern int a01drm_map_pmr(int fd, uint64_t pmr_handle, void **map);
+      (void)addr;
+      (void)prot;
+      result = a01drm_map_pmr(ws->render_fd, (uint64_t)(uintptr_t)srv_bo->pmr, &bo->map)
+                  ? VK_ERROR_MEMORY_MAP_FAILED
+                  : VK_SUCCESS;
+   }
+#else
+""" + old + "#endif\n"
+if old in t and "a01drm_map_pmr" not in t:
+    t = t.replace(old, new, 1)
+    f.write_text(t)
+    print("pvr_srv_bo.c: PMR maps through A01CoreGPU")
+elif "a01drm_map_pmr" not in t:
+    raise SystemExit("pvr_srv_bo.c: mmap call not found")
