@@ -1,0 +1,26 @@
+From 2003b0b746cae87ffa35f3e2d99e7c328a1f50f9 Mon Sep 17 00:00:00 2001
+From: a01core <a01core@localhost>
+Date: Sun, 1 Nov 2026 17:33:43 -0300
+Subject: [PATCH] 0315 a01core: map 64 KiB of RGX registers (SYS_BUS_SECURE is
+ at 0xA100)
+
+---
+ bsd/dev/a01core_gpu.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/bsd/dev/a01core_gpu.c b/bsd/dev/a01core_gpu.c
+index be09cbc..5b1d524 100644
+--- a/bsd/dev/a01core_gpu.c
++++ b/bsd/dev/a01core_gpu.c
+@@ -305,7 +305,7 @@ a01core_gpu_probe(void)
+ 	}
+ 	vm_offset_t spm = ml_io_map(SPM_PA, 0x1000);
+ 	vm_offset_t infra = ml_io_map(INFRA_AO_PA, 0x1000);
+-	vm_offset_t rgx = ml_io_map(RGX_PA, 0x1000);
++	vm_offset_t rgx = ml_io_map(RGX_PA, 0x10000);
+ 	vm_offset_t mfgcfg = ml_io_map(MFG_CFG_PA, 0x1000);
+ 	if (!spm || !infra || !rgx || !mfgcfg) {
+ 		printf("A01CORE GPU: MMIO map failed\n");
+-- 
+2.55.0.windows.5
+
