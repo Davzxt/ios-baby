@@ -1,0 +1,26 @@
+From 6f2371905d88c6bb3efd2283269ec95351e32e99 Mon Sep 17 00:00:00 2001
+From: a01core <a01core@localhost>
+Date: Sun, 1 Nov 2026 16:07:15 -0300
+Subject: [PATCH] 0312 a01core: fix the RAM-hole log string
+
+---
+ osfmk/arm/pmap/pmap.c | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/osfmk/arm/pmap/pmap.c b/osfmk/arm/pmap/pmap.c
+index 93cd262..f7f71f4 100644
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -2634,8 +2634,7 @@ a01_load_ram_holes(pmap_paddr_t first, pmap_paddr_t end)
+ 		a01_ram_holes[a01_n_ram_holes].end = e;
+ 		a01_n_ram_holes++;
+ 		avail_page_count -= (unsigned int)atop(e - s);
+-		kprintf("A01CORE RAM: hole %#llx-%#llx kept away from the VM
+-",
++		kprintf("A01CORE RAM: hole %#llx-%#llx kept away from the VM\n",
+ 		    (unsigned long long)s, (unsigned long long)e);
+ 	}
+ }
+-- 
+2.55.0.windows.5
+
