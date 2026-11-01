@@ -50,6 +50,14 @@
 #define DEFAULT_RAM_SIZE   0x40000000UL
 #define SURFACE_PA         0xa0000000UL   /* A01CORE_SCALED_SURFACE_PA */
 #define SURFACE_SIZE       0x01000000UL   /* 828x1792x4 rounded up */
+/* Where the A01CORE kernel was compiled to draw (pexpert A5XELTE.h A01CORE_FB_PA /
+ * A01CORE_FB_STRIDE). Build both with the same values; these are the defaults. */
+#ifndef A01CORE_FB_PA
+#define A01CORE_FB_PA      0xbe840000UL
+#endif
+#ifndef A01CORE_FB_STRIDE
+#define A01CORE_FB_STRIDE  2944U
+#endif
 
 #define BOOT_LINE_LENGTH 608
 #define MAX_RANGES       48
@@ -103,6 +111,7 @@ static void clean_range(uintptr_t start, uintptr_t end)
 /* ---- screen + log ---- */
 static uintptr_t fb_base;
 static uint32_t fb_stride = 736U * 4U, fb_bpp = 32;
+static int fb_layer = -1;
 static unsigned row_next;
 static uintptr_t log_text = LOG_PA + LOG_TEXT_OFF;
 
@@ -396,6 +405,7 @@ static void find_framebuffer(void)
             fb_base = (uintptr_t)addr;
             fb_stride = pitch;
             fb_bpp = fmt == 0 ? 16 : 32;   /* OVL_CON_CLRFMT_RGB565 = 0 */
+            fb_layer = (int)n;
             break;
         }
     }
@@ -499,6 +509,86 @@ static uintptr_t fail(const char *why)
 }
 
 /* Returns the XNU entry PA, or 0 to halt. */
+static uint64_t ticks(void)
+{
+#ifdef A01_HOST_TEST
+    static uint64_t t;
+    return t += 1000;
+#else
+    uint64_t v;
+    __asm__ volatile ("isb; mrs %0, cntpct_el0" : "=r"(v));
+    return v;
+#endif
+}
+
+/*
+ * The kernel draws at a compiled-in address (A01CORE_FB_PA, A01CORE_FB_STRIDE). If LK put
+ * its scanout buffer elsewhere, move the picture there and point DISP_OVL0 at it, so the
+ * kernel does not have to be rebuilt with the probe's numbers. The target must be DRAM and
+ * either free or inside LK's own video memory, and clear of everything the shim loads.
+ */
+static int pin_framebuffer(uint64_t xnu_base, uint64_t xnu_size, uintptr_t payload, uint64_t plen,
+                           uintptr_t fdt)
+{
+    uint64_t want = A01CORE_FB_PA, size = (uint64_t)A01CORE_FB_STRIDE * FB_H;
+    if (fb_base == want && fb_stride == A01CORE_FB_STRIDE)
+        return 1;
+    s("FB ");
+    hex(fb_base);
+    s("/");
+    dec(fb_stride);
+    s(" -> ");
+    hex(want);
+    s("/");
+    dec(A01CORE_FB_STRIDE);
+    line_end(YELLOW);
+    int c = first_conflict(want, size);
+    int in_vram = have_fb_l && want >= fb_fdt && want + size <= fb_fdt + (vram_size ? vram_size : 0x2000000);
+    int in_fb_rsv = c >= 0 && fb_base >= rsv[c].base && fb_base < rsv[c].base + rsv[c].size &&
+                    want + size <= rsv[c].base + rsv[c].size && want >= rsv[c].base;
+    if (fb_layer < 0 || A01CORE_FB_STRIDE < FB_W * 4U || !inside_dram(want, size) ||
+        (c >= 0 && !in_vram && !in_fb_rsv) ||
+        overlaps(want, size, xnu_base, xnu_size) || overlaps(want, size, SURFACE_PA, SURFACE_SIZE) ||
+        overlaps(want, size, payload, plen) || overlaps(want, size, fdt, 0x100000) ||
+        overlaps(want, size, (uintptr_t)_start, (uintptr_t)_image_end - (uintptr_t)_start) ||
+        overlaps(want, size, LOG_PA, PAGE)) {
+        s("FB TARGET NOT USABLE: BUILD XNU WITH");
+        line_end(RED);
+        s("A01CORE_FB_PA ");
+        hex(fb_base);
+        s(" STRIDE ");
+        dec(fb_stride);
+        line_end(RED);
+        return 0;
+    }
+    /* copy the picture row by row, in the order that is safe if the ranges overlap */
+    uint32_t row = FB_W * 4U;
+    if (want > fb_base) {
+        for (unsigned y = FB_H; y-- > 0;)
+            memcpy((void *)(uintptr_t)(want + (uint64_t)y * A01CORE_FB_STRIDE),
+                   (const void *)(fb_base + (uintptr_t)y * fb_stride), row);
+    } else {
+        for (unsigned y = 0; y < FB_H; y++)
+            memcpy((void *)(uintptr_t)(want + (uint64_t)y * A01CORE_FB_STRIDE),
+                   (const void *)(fb_base + (uintptr_t)y * fb_stride), row);
+    }
+    clean_range((uintptr_t)want, (uintptr_t)(want + size));
+    uint32_t pitch = mmio_rd(OVL0_PA + OVL_PITCH(fb_layer));
+    mmio_wr(OVL0_PA + OVL_PITCH(fb_layer), (pitch & ~0xffffU) | A01CORE_FB_STRIDE);
+    mmio_wr(OVL0_PA + OVL_ADDR(fb_layer), (uint32_t)want);
+    /* the new address is latched at the next frame: wait ~3 frames (13 MHz counter) */
+    for (uint64_t t0 = ticks(); ticks() - t0 < 13000000ULL / 20U;)
+        ;
+    fb_base = (uintptr_t)want;
+    fb_stride = A01CORE_FB_STRIDE;
+    s("FB PINNED, OVL0 L");
+    dec((uint64_t)fb_layer);
+    s(" ADDR ");
+    hex(mmio_rd(OVL0_PA + OVL_ADDR(fb_layer)));
+    line_end(GREEN);
+    return mmio_rd(OVL0_PA + OVL_ADDR(fb_layer)) == (uint32_t)want;
+}
+
 uintptr_t a01_main(uintptr_t fdt, uint64_t entry_el, uint64_t sctlr);
 uintptr_t a01_main(uintptr_t fdt, uint64_t entry_el, uint64_t sctlr)
 {
@@ -592,6 +682,8 @@ uintptr_t a01_main(uintptr_t fdt, uint64_t entry_el, uint64_t sctlr)
         return fail("RAM WINDOW NOT FREE: REBUILD ADT");
     if (fb_bpp != 32)
         return fail("FRAMEBUFFER IS NOT 32 BPP");
+    if (!pin_framebuffer(p->phys_base, p->mem_size, rd_start, length, fdt))
+        return fail("FRAMEBUFFER NOT WHERE THE KERNEL DRAWS");
 
     uintptr_t memory_end = p->phys_base + p->mem_size;
     uintptr_t kernel_end = p->phys_base + (p->kernel_end - p->virt_base);

@@ -75,10 +75,13 @@ originais, ou o firmware completo. Para sair da sonda, segure **Power + Volume �
 ## 2. Marco 2: compilar o kernel A01CORE
 
 1. Rode o workflow **xnu** com `machine_config = A01CORE`. Em `a01core_fb_pa` e
-   `a01core_fb_stride`, use os valores da foto do marco 1.
-2. **Espere erros de compilação nas primeiras execuções.** Os patches `0300`–`0303` foram
-   escritos e aplicam limpos sobre a base, mas não foram compilados (aqui não há macOS/Xcode).
-   Os erros aparecem como anotações do job. Corrija e rode de novo.
+   `a01core_fb_stride`, pode deixar vazio: o shim **move a imagem da tela** para o endereço
+   que o kernel usa (padrão `0xbe840000`, stride 2944) e reprograma o `DISP_OVL0`. Só use
+   os valores da foto se o shim mostrar `FB TARGET NOT USABLE`; nesse caso, passe os mesmos
+   valores também no workflow **a01core-shim**.
+2. Desde 01/11/2026 o kernel `A01CORE` compila sem erros no GitHub Actions (macos-14 e
+   macos-15-intel), com os patches `0300`–`0304`. Se uma mudança sua quebrar o build, os
+   erros aparecem como anotações do job.
 3. Baixe o artefato `xnu-kernel-*` (`kernel.development.a01core`). O passo
    "Check Cortex-A53 compatibility" precisa passar sem instruções LSE.
 
@@ -86,7 +89,8 @@ originais, ou o firmware completo. Para sair da sonda, segure **Power + Volume �
 
 ```
 python tools/mkadt_a01core.py a01core.adt --ram-base 0x60000000 --ram-mb 1024 --fb-pa 0x<USE FB> --fb-stride <STRIDE>
-python tools/mkpayload.py kernel.development.a01core a01core.adt payload.bin --cmdline "debug=0xc serial=3 cpus=1 keepsyms=1 -enable_kprintf_spam -noprogress rd=emmcroot0 emmcroot=userdata emmcprobe=1 wdt=-1 -wdt_no_pmu wdt_test=no_user_checkin"
+curl -L -o td4150_a01core.img https://raw.githubusercontent.com/almondnguyen/android_kernel_samsung_a01core/master/firmware/tsp_synaptics/td4150_a01core.img
+python tools/mkpayload.py kernel.development.a01core a01core.adt payload.bin --blob TouchFirmware=td4150_a01core.img --cmdline "debug=0xc serial=3 cpus=1 keepsyms=1 -enable_kprintf_spam -noprogress rd=emmcroot0 emmcroot=userdata emmcprobe=1 wdt=-1 -wdt_no_pmu wdt_test=no_user_checkin"
 python tools/a01core-pack-boot.py pack boot.img a01core.Image xnu-boot.img --append payload.bin
 ```
 
@@ -145,15 +149,33 @@ E gere o ADT com o `/product` real do iPhone X (`research/ipsw-x/d22ap.adt`, com
 
 ## 6. Marco 6: toque
 
-Rode com `a01touch=1` (só leitura) e confira os valores impressos com
-[A01CORE_HARDWARE.md](A01CORE_HARDWARE.md). Depois tente `a01touch=2`. Se a primeira resposta
-SPI começar com `a5`, o caminho SPI até o chip Synaptics funciona.
+O driver do toque (patch `0304`, `bsd/dev/a01core_touch.c`) já vem ligado. Ele precisa do
+firmware do controlador, que vai dentro do payload (`--blob TouchFirmware=…`, marco 3). O
+arquivo `td4150_a01core.img` é da Samsung e está no código-fonte GPL do SM-A013; ele **não**
+fica neste repositório.
 
-Falta portar o protocolo do código GPL da Samsung para o SM-A013:
+O que o driver faz, sem interrupção (só leitura do GPIO0 em loop):
 
-- o envio do firmware ("zero flash", `synaptics_tcm_zeroflash.c`);
-- os relatórios de toque, para `sweet_hid_touch()`;
-- no painel Novatek, o equivalente `nt36xxx` com "host download".
+1. pinos GPIO31–34 em função 1 (SPI0), clock do SPI0 ligado (`INFRA_CG1` bit 1);
+2. lê o relatório de identificação; em modo ROM bootloader envia os 100 KB de firmware
+   (`CMD_ROMBOOT_DOWNLOAD`) e manda o chip rodá-lo;
+3. envia a configuração de toque e a de tela quando o chip pede (`CMD_DOWNLOAD_CONFIG`);
+4. lê `max x/y`, define o formato dos relatórios e repassa os toques ao iOS em pixels do
+   painel (720×1520), com até 10 dedos.
+
+No log do kernel, o caminho bom é: `firmware: app 102400 ...` → `identify: ... mode 0x4` →
+`host download done` → `config type 1` → `config type 2` → `application: ... max x ...` →
+`ready`.
+
+| Mensagem | O que fazer |
+| --- | --- |
+| `no touch firmware in the payload` | faltou `--blob TouchFirmware=td4150_a01core.img` |
+| `no TouchComm device on SPI0 CS0` | o seu painel é a variante Novatek NT36525B (não suportada) ou o SPI não respondeu |
+| `spi timeout` | clock do SPI desligado; mande o log |
+| toque espelhado/girado | `a01touch_flipx=1`, `a01touch_flipy=1` ou `a01touch_swap=1` |
+
+`a01touch=2` liga o log detalhado, `a01touch=0` desliga o driver, `a01touch_hz=` muda o
+clock do SPI (padrão 5 MHz).
 
 ## Marcos que não estão no alcance deste port
 

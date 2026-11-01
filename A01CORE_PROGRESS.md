@@ -31,3 +31,25 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
   rewritten, kernel_addr 0x40080000), `a01core-odin-pack.py` (vbmeta flags 3, Odin tar.md5).
 - **Next on the phone (milestone 1):** flash the probe boot image with Odin and photograph
   the screen. Main unknown: whether this LK starts a 64-bit kernel.
+
+## 2026-11-01 (tarde): kernel compila, driver de toque, tela fixa
+
+- **CI (Davzxt/ios-baby, branch `a01core`):** o workflow `xnu` compilou
+  `kernel.development.a01core` (17 MB) em macos-14 e macos-15-intel com `0300`–`0303`;
+  0 instruções LSE no código. O shim falhava no assembler (`orr x1, x1, #0x9` não é
+  imediato lógico): corrigido.
+- **`0304` toque TD4150:** driver TCM completo por polling (SPI0 FIFO com pausa, host
+  download ROMBOOT, `APP_CONFIG`/`DISPLAY` sob pedido do chip, formato de relatório fixo
+  index/class/x/y, até 10 dedos, reinício automático se o chip resetar). Registradores
+  conferidos no código GPL do SM-A013: clock do SPI0 é `INFRA_CG1` **bit 1** (o `0303`
+  usava o bit 6 do MT6765). Firmware `td4150_a01core.img` (ROMBOOT_APP_CODE 100 KB,
+  APP_CONFIG 4 KB, DISPLAY 8 KB, CRCs ok) entra pelo payload: `mkpayload.py --blob`.
+  Compilação ainda a confirmar no CI; nada rodou no aparelho.
+- **Shim:** se o LK desenhar fora de `A01CORE_FB_PA`/`A01CORE_FB_STRIDE`, o shim copia a
+  imagem e reprograma `DISP_OVL0` (endereço e pitch da camada ativa), checando que o
+  destino é DRAM livre ou a própria VRAM do LK. O kernel não precisa mais ser recompilado
+  com os números da sonda.
+- **Recuperação do aparelho do usuário (fora do git):** o brick vinha de um
+  `userdata.img` do HakiOS gravado cru numa faixa errada do eMMC (~0x27EBC000–0x2AC30000):
+  `tee1` inteiro e o início do `super` sobrescritos. Relatório em
+  `C:\A01CORE_RECOVERY\CLAUDE_LOGS`.

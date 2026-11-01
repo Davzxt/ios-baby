@@ -9,7 +9,7 @@ set -eu
 cd "$(dirname "$0")"
 : "${CROSS:=aarch64-linux-gnu-}"
 mkdir -p out
-CFLAGS="-c -O2 -ffreestanding -fno-builtin -fno-stack-protector -fno-pic -fno-pie -nostdlib -fno-asynchronous-unwind-tables -fno-jump-tables -mgeneral-regs-only -mstrict-align -mcpu=cortex-a53 -Wall -Wextra -Werror"
+CFLAGS="-c -O2 -ffreestanding -fno-builtin -fno-stack-protector -fno-pic -fno-pie -nostdlib -fno-asynchronous-unwind-tables -fno-jump-tables -mgeneral-regs-only -mstrict-align -mcpu=cortex-a53 -Wall -Wextra -Werror ${A01CORE_DEFINES:-}"
 "${CROSS}gcc" $CFLAGS start.S -o out/start.o
 "${CROSS}gcc" $CFLAGS a01core.c -o out/a01core.o
 "${CROSS}ld" -static -T image.ld --build-id=none --no-warn-rwx-segments out/start.o out/a01core.o -o out/a01core.elf

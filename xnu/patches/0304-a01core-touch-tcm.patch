@@ -1,0 +1,955 @@
+From 67d9a03c55a83587dfa0c56defb331b1d8a427f9 Mon Sep 17 00:00:00 2001
+From: a01core <a01core@localhost>
+Date: Sun, 1 Nov 2026 11:10:55 -0300
+Subject: [PATCH] 0304 a01core touch: Synaptics TD4150 TCM zero-flash driver
+
+---
+ bsd/dev/a01core_touch.c | 870 ++++++++++++++++++++++++++++++++++------
+ 1 file changed, 757 insertions(+), 113 deletions(-)
+
+diff --git a/bsd/dev/a01core_touch.c b/bsd/dev/a01core_touch.c
+index ea7a737..c8a825b 100644
+--- a/bsd/dev/a01core_touch.c
++++ b/bsd/dev/a01core_touch.c
+@@ -1,55 +1,76 @@
+ /*
+- * Galaxy A01 Core (MediaTek MT6739) touchscreen: bring-up PROBE, not a
+- * touch driver yet.
++ * Galaxy A01 Core (MediaTek MT6739) touchscreen: Synaptics TD4150 TDDI over SPI0
++ * (TouchComm "TCM" protocol, zero-flash / host download).
+  *
+- * The A01 Core ships with one of two TDDI panels (dtbo fragment@61, spi0):
+- *   TD4150   (Synaptics TCM over SPI, chip select 0, "synaptics,tcm-spi")
+- *   NT36525B (Novatek over SPI, chip select 1, "novatek,NVT-ts-spi")
+- * Both use the MT6739 SPI0 controller at 0x1100a000, pins GPIO31 CS,
+- * GPIO32 CLK, GPIO33 MISO, GPIO34 MOSI (pinmux function 1) and GPIO0 as the
+- * active-low attention line. Both are "zero flash" / host-download parts:
+- * the touch firmware (/vendor/firmware/tsp_synaptics/td4150_a01core.img on
+- * the TD4150 variant) must be sent by the host at every power-up before the
+- * chip reports touches. That protocol lives in Samsung's GPL kernel source
+- * for SM-A013 (synaptics_tcm zeroflash, nt36xxx hostdl) and is not ported
+- * here: this file only checks the hardware path so it can be.
++ * The TD4150 has no flash for its firmware. After every power-up it sits in its ROM
++ * bootloader and the host must send the application firmware, then the touch and
++ * display configurations, before it reports touches. The files come from Samsung's
++ * GPL kernel tree for SM-A013 (firmware/tsp_synaptics/td4150_a01core.img); this
++ * driver does not contain them. tools/mkpayload.py --blob TouchFirmware=FILE puts the
++ * image in RAM next to the kernel and records it in the ADT as
++ * /chosen/memory-map "TouchFirmware" = <phys, size>.
+  *
+- *   a01touch=0 (default) off
+- *   a01touch=1 read-only: pinmux, GPIO0 level, SPI0 registers, clock gate
+- *   a01touch=2 also: SPI0 pins to function 1, ungate the SPI0 clock, and
+- *              clock 16 bytes in from chip select 0 (a TCM device sends its
+- *              0xA5-marked identify report after reset). Printed, not parsed.
++ * Bring-up, all polled from one kernel thread (no interrupt wiring needed):
++ *   1. SPI0 pins GPIO31..34 to function 1 (SPI0_A_CSB/CLK/MI/MO), SPI0 clock ungated
++ *      (infracfg_ao CG1 bit 1), attention line GPIO0 as input (active low).
++ *   2. Read the identify report. Mode 0x04 = ROM bootloader: CMD_ROMBOOT_DOWNLOAD (0x45)
++ *      with the ROMBOOT_APP_CODE area, then CMD_ROMBOOT_RUN_BOOTLOADER_FIRMWARE (0x42).
++ *   3. The host-download firmware asks for its configs with status reports (0x1b):
++ *      CMD_DOWNLOAD_CONFIG (0x30) with APP_CONFIG (type 1) and DISPLAY (type 2).
++ *   4. Application running: CMD_GET_APPLICATION_INFO (0x20) for max x/y, then
++ *      CMD_SET_TOUCH_REPORT_CONFIG (0x26) with a fixed byte-aligned layout:
++ *      for each active object { index 8, classification 8, x 16, y 16 }.
++ *   5. Touch reports (0x11) go to sweet_hid_touch() in panel pixels (720x1520).
++ *   If the chip resets (identify in ROM boot mode again) the driver starts over.
+  *
+- * Register sources: Linux spi-mt65xx.c (MT6765-style "enhance timing"
+- * controller), pinctrl-mt6765 (GPIO 0x10005000: DIN 0x200, MODE 0x300,
+- * 4 bits per pin) and clk-mt6765 (infracfg_ao CG1 bit 6 = SPI0). The MT6739
+- * values are assumed equal and NOT verified; check every line of the
+- * a01touch=1 output against them before trying a01touch=2.
++ * Wire format (TCM over SPI, mode 0, 5 MHz): a command is [cmd, len lo, len hi,
++ * payload], split in chunks led by 0x01 (CONTINUE_WRITE) when longer than the
++ * device's max write size. A message from the device is [0xa5, code, len lo, len hi],
++ * then (len > 0) a second read of [0xa5, 0x03, payload..., 0x5a]; codes below 0x10
++ * are command statuses (0x01 OK), 0x10 and up are reports.
++ *
++ * Hardware facts checked against the SM-A013 kernel source: pinctrl-mt6739.c (mode
++ * 0x300 + pin/8*0x10, 4 bits; DIN 0x200 + pin/32*0x10), clk-mt6739.c (infra1 CG
++ * 0x88/0x8c/0x94, infra_spi0 = bit 1), spi-mt65xx.c (mt6739: enhance timing, must_tx,
++ * 32-byte FIFO, pause mode keeps CS asserted between chunks), mt6739_a01core
++ * input dtsi (spi-max-frequency 5 MHz, mode 0, CS 0, irq GPIO0 low).
++ * The NT36525B (Novatek) panel variant on CS1 is not handled.
++ *
++ * Boot-args: a01touch=0 off, 1 on (default), 2 verbose; a01touch_hz (SPI clock);
++ * a01touch_flipx=1, a01touch_flipy=1, a01touch_swap=1.
+  */
+ #if defined(ARM64_BOARD_CONFIG_A01CORE)
+ #include <sys/param.h>
+ #include <sys/systm.h>
++#include <sys/errno.h>
++#include <string.h>
++#include <kern/kalloc.h>
+ #include <kern/clock.h>
++#include <kern/thread.h>
++#include <kern/sched_prim.h>
+ #include <machine/machine_routines.h>
+ #include <pexpert/pexpert.h>
++#include <pexpert/device_tree.h>
+ 
+ extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
++extern void sweet_hid_touch(int finger, int down, int x, int y);
+ extern void delay(int usec);
++void a01core_touch_probe(void);
+ 
+-#define A01_GPIO_PA          0x10005000u
++#define LOG(fmt, ...)  printf("A01CORE TOUCH: " fmt "\n", ##__VA_ARGS__)
++#define VLOG(fmt, ...) do { if (t_verbose) LOG(fmt, ##__VA_ARGS__); } while (0)
++
++/* ---- MMIO ---------------------------------------------------------------- */
++#define GPIO_PA              0x10005000u
+ #define GPIO_DIN(n)          (0x200u + ((n) / 32u) * 0x10u)
++#define GPIO_DIR(n)          (0x000u + ((n) / 32u) * 0x10u)
+ #define GPIO_MODE(n)         (0x300u + ((n) / 8u) * 0x10u)
+-#define GPIO_MODE_SET(n)     (GPIO_MODE(n) + 4u)
+-#define GPIO_MODE_CLR(n)     (GPIO_MODE(n) + 8u)
+ #define GPIO_MODE_SHIFT(n)   (((n) % 8u) * 4u)
+-
+-#define A01_INFRA_AO_PA      0x10001000u
+-#define INFRA_CG1_SET        0x088u
++#define INFRA_AO_PA          0x10001000u
+ #define INFRA_CG1_CLR        0x08cu
+ #define INFRA_CG1_STA        0x094u
+-#define INFRA_CG1_SPI0       (1u << 6)
+-
+-#define A01_SPI0_PA          0x1100a000u
++#define INFRA_CG1_SPI0       (1u << 1)
++#define SPI0_PA              0x1100a000u
+ #define SPI_CFG0             0x000u
+ #define SPI_CFG1             0x004u
+ #define SPI_TX_DATA          0x010u
+@@ -59,17 +80,92 @@ extern void delay(int usec);
+ #define SPI_STATUS1          0x020u
+ #define SPI_PAD_SEL          0x024u
+ #define SPI_CFG2             0x028u
+-#define SPI_CMD_ACT          (1u << 0)
+-#define SPI_CMD_RST          (1u << 2)
+-#define SPI_CMD_RX_DMA       (1u << 10)
+-#define SPI_CMD_TX_DMA       (1u << 11)
+-#define SPI_CMD_TXMSBF       (1u << 12)
+-#define SPI_CMD_RXMSBF       (1u << 13)
++#define CMD_ACT              (1u << 0)
++#define CMD_RESUME           (1u << 1)
++#define CMD_RST              (1u << 2)
++#define CMD_PAUSE_EN         (1u << 4)
++#define CMD_DEASSERT         (1u << 5)
++#define CMD_SAMPLE_SEL       (1u << 6)
++#define CMD_CS_POL           (1u << 7)
++#define CMD_CPHA             (1u << 8)
++#define CMD_CPOL             (1u << 9)
++#define CMD_RX_DMA           (1u << 10)
++#define CMD_TX_DMA           (1u << 11)
++#define CMD_TXMSBF           (1u << 12)
++#define CMD_RXMSBF           (1u << 13)
++#define CMD_RX_ENDIAN        (1u << 14)
++#define CMD_TX_ENDIAN        (1u << 15)
++#define CMD_FINISH_IE        (1u << 16)
++#define CMD_PAUSE_IE         (1u << 17)
++#define ST0_PAUSE            (1u << 1)
++#define SPI_FIFO             32u
++/* spi_sel normally runs from syspll3_d2 (109.2 MHz); if LK left it on 26 MHz the
++ * bus just runs slower, which the TD4150 accepts. */
++#define SPI_SRC_HZ           109200000u
++
++#define TS_ATTN_GPIO         0u
++static const uint8_t spi_pins[4] = { 31, 32, 33, 34 };
++
++/* ---- TCM ----------------------------------------------------------------- */
++#define MSG_MARKER           0xa5
++#define MSG_PADDING          0x5a
++#define ST_IDLE              0x00
++#define ST_OK                0x01
++#define ST_BUSY              0x02
++#define ST_CONTINUED         0x03
++#define ST_ERROR             0x0f
++#define ST_INVALID           0xff
++#define CMD_CONTINUE_WRITE   0x01
++#define CMD_IDENTIFY         0x02
++#define CMD_GET_APP_INFO     0x20
++#define CMD_SET_TOUCH_CFG    0x26
++#define CMD_DOWNLOAD_CONFIG  0x30
++#define CMD_ROMBOOT_RUN_BL   0x42
++#define CMD_ROMBOOT_DOWNLOAD 0x45
++#define RPT_IDENTIFY         0x10
++#define RPT_TOUCH            0x11
++#define RPT_STATUS           0x1b
++#define MODE_APP             0x01
++#define MODE_HOSTDOWNLOAD    0x02
++#define MODE_ROMBOOT         0x04
++#define RD_CHUNK             256u
++#define WR_CHUNK_MAX         512u
++#define ROMBOOT_RESERVED     14u
++#define RESP_TIMEOUT_MS      3000u
++
++#define TOUCH_END                 0x00
++#define TOUCH_FOREACH_ACTIVE      0x01
++#define TOUCH_FOREACH_END         0x03
++#define TOUCH_OBJ_INDEX           0x06
++#define TOUCH_OBJ_CLASS           0x07
++#define TOUCH_OBJ_X               0x08
++#define TOUCH_OBJ_Y               0x09
++#define OBJ_BYTES                 6u
++#define MAX_FINGERS               10u
++
++#define PANEL_W              720
++#define PANEL_H              1520
++
++#define IMG_MAGIC            0x4818472bu
++#define AREA_MAGIC           0x7c05e516u
++
++static vm_offset_t g_gpio, g_infra, g_spi;
++static int t_verbose, t_flipx, t_flipy, t_swap;
++static uint32_t t_hz = 5000000u;
++static int t_paused;
++static int t_sleep_evt;
+ 
+-#define A01_TS_IRQ_GPIO      0u
+-static const uint8_t a01_spi_pins[4] = { 31, 32, 33, 34 };   /* CS CLK MI MO */
++static uint8_t *msg;                 /* payload of the last message read */
++static uint32_t msg_cap = 4096;
++static uint32_t wr_chunk = 64;       /* until identify says otherwise */
++static uint32_t rd_chunk = RD_CHUNK;
+ 
+-static vm_offset_t a01_gpio, a01_infra, a01_spi;
++struct area { const uint8_t *data; uint32_t len; };
++static struct area fw_app, fw_appcfg, fw_disp;
++
++static uint16_t max_x = PANEL_W - 1, max_y = PANEL_H - 1, cfg_size;
++static uint16_t down_mask_prev;
++static int16_t last_x[MAX_FINGERS], last_y[MAX_FINGERS];
+ 
+ static uint32_t
+ rd(vm_offset_t b, uint32_t o)
+@@ -84,107 +180,655 @@ wr(vm_offset_t b, uint32_t o, uint32_t v)
+ {
+ 	__asm__ volatile ("dmb oshst" ::: "memory");
+ 	*(volatile uint32_t *)(b + o) = v;
++	__asm__ volatile ("dsb osh" ::: "memory");
++}
++
++static void
++t_msleep(unsigned ms)
++{
++	uint64_t deadline;
++	clock_interval_to_deadline(ms, NSEC_PER_MSEC, &deadline);
++	(void)assert_wait_deadline(&t_sleep_evt, THREAD_UNINT, deadline);
++	thread_block(THREAD_CONTINUE_NULL);
+ }
+ 
+-static unsigned
+-a01_gpio_mode(unsigned pin)
++static uint32_t
++le16(const uint8_t *p)
+ {
+-	return (rd(a01_gpio, GPIO_MODE(pin)) >> GPIO_MODE_SHIFT(pin)) & 0xfu;
++	return (uint32_t)p[0] | ((uint32_t)p[1] << 8);
++}
++
++static uint32_t
++le32(const uint8_t *p)
++{
++	return le16(p) | (le16(p + 2) << 16);
++}
++
++static uint32_t
++crc32_ieee(const uint8_t *p, uint32_t n)
++{
++	uint32_t c = 0xffffffffu;
++	while (n--) {
++		c ^= *p++;
++		for (int k = 0; k < 8; k++) {
++			c = (c >> 1) ^ (0xedb88320u & (0u - (c & 1u)));
++		}
++	}
++	return ~c;
++}
++
++static int
++attention(void)
++{
++	return ((rd(g_gpio, GPIO_DIN(TS_ATTN_GPIO)) >> (TS_ATTN_GPIO % 32u)) & 1u) == 0;
++}
++
++/* ---- SPI0, FIFO mode with pause (CS stays asserted across 32-byte chunks) --- */
++static void
++spi_hw_setup(void)
++{
++	uint32_t div = (SPI_SRC_HZ + t_hz - 1) / t_hz;
++	if (div < 2) {
++		div = 2;
++	}
++	uint32_t sck = (div + 1) / 2, cs = sck * 2;
++	wr(g_spi, SPI_CFG2, ((sck - 1) & 0xffffu) | (((sck - 1) & 0xffffu) << 16));
++	wr(g_spi, SPI_CFG0, ((cs - 1) & 0xffffu) | (((cs - 1) & 0xffffu) << 16));
++	wr(g_spi, SPI_CFG1, (rd(g_spi, SPI_CFG1) & ~0xffu) | ((cs - 1) & 0xffu));
++	wr(g_spi, SPI_PAD_SEL, 0);
+ }
+ 
+ static void
+-a01_touch_dump(void)
+-{
+-	printf("A01CORE TOUCH: GPIO%u (attention) din=%u mode=%u\n", A01_TS_IRQ_GPIO,
+-	    (rd(a01_gpio, GPIO_DIN(A01_TS_IRQ_GPIO)) >> (A01_TS_IRQ_GPIO % 32u)) & 1u,
+-	    a01_gpio_mode(A01_TS_IRQ_GPIO));
+-	printf("A01CORE TOUCH: spi pins mode cs=%u clk=%u mi=%u mo=%u (want 1)\n",
+-	    a01_gpio_mode(a01_spi_pins[0]), a01_gpio_mode(a01_spi_pins[1]),
+-	    a01_gpio_mode(a01_spi_pins[2]), a01_gpio_mode(a01_spi_pins[3]));
+-	printf("A01CORE TOUCH: infracfg_ao cg1_sta=%#x (spi0 %s)\n", rd(a01_infra, INFRA_CG1_STA),
+-	    (rd(a01_infra, INFRA_CG1_STA) & INFRA_CG1_SPI0) ? "gated" : "running");
+-	printf("A01CORE TOUCH: spi0 cfg0=%#x cfg1=%#x cfg2=%#x cmd=%#x st0=%#x st1=%#x pad=%#x\n",
+-	    rd(a01_spi, SPI_CFG0), rd(a01_spi, SPI_CFG1), rd(a01_spi, SPI_CFG2),
+-	    rd(a01_spi, SPI_CMD), rd(a01_spi, SPI_STATUS0), rd(a01_spi, SPI_STATUS1),
+-	    rd(a01_spi, SPI_PAD_SEL));
+-}
+-
+-/* One FIFO-mode full-duplex transfer of len (<= 32, multiple of 4) bytes. */
++spi_begin(void)
++{
++	uint32_t cmd = rd(g_spi, SPI_CMD);
++	cmd &= ~(CMD_ACT | CMD_RESUME | CMD_RST | CMD_CPHA | CMD_CPOL | CMD_TX_DMA | CMD_RX_DMA |
++	    CMD_TX_ENDIAN | CMD_RX_ENDIAN | CMD_CS_POL | CMD_SAMPLE_SEL | CMD_DEASSERT |
++	    CMD_FINISH_IE | CMD_PAUSE_IE);
++	cmd |= CMD_TXMSBF | CMD_RXMSBF | CMD_PAUSE_EN;      /* SPI mode 0, MSB first */
++	wr(g_spi, SPI_CMD, cmd);
++	t_paused = 0;
++}
++
++static void
++spi_end(void)
++{
++	uint32_t cmd = rd(g_spi, SPI_CMD) & ~(CMD_PAUSE_EN | CMD_ACT | CMD_RESUME);
++	wr(g_spi, SPI_CMD, cmd | CMD_RST);   /* releases CS */
++	wr(g_spi, SPI_CMD, cmd);
++	t_paused = 0;
++}
++
+ static int
+-a01_spi_xfer(const uint8_t *tx, uint8_t *rx, uint32_t len)
+-{
+-	uint32_t cmd = rd(a01_spi, SPI_CMD);
+-	cmd &= ~(SPI_CMD_RX_DMA | SPI_CMD_TX_DMA | (3u << 8));   /* PIO, mode 0 */
+-	cmd |= SPI_CMD_TXMSBF | SPI_CMD_RXMSBF;
+-	wr(a01_spi, SPI_CMD, cmd | SPI_CMD_RST);
+-	wr(a01_spi, SPI_CMD, cmd);
+-	/* ~2 MHz from a ~100 MHz source: SCK high/low 25 ticks each (CFG2),
+-	 * CS setup/hold 50 ticks (CFG0, enhance-timing layout). */
+-	wr(a01_spi, SPI_CFG2, (24u << 16) | 24u);
+-	wr(a01_spi, SPI_CFG0, (49u << 16) | 49u);
+-	wr(a01_spi, SPI_CFG1, ((len - 1u) << 16) | 2u);
++spi_chunk(const uint8_t *tx, uint8_t *rx, uint32_t len)
++{
++	uint32_t cfg1 = rd(g_spi, SPI_CFG1) & ~(0x3ff0000u | 0xff00u);
++	wr(g_spi, SPI_CFG1, cfg1 | ((len - 1u) << 16));
+ 	for (uint32_t i = 0; i < len; i += 4) {
+-		uint32_t w;
+-		memcpy(&w, tx + i, 4);
+-		wr(a01_spi, SPI_TX_DATA, w);
++		uint32_t w = 0xffffffffu;
++		if (tx) {
++			memcpy(&w, tx + i, MIN(4u, len - i));
++		}
++		wr(g_spi, SPI_TX_DATA, w);           /* must_tx: always feed the FIFO */
+ 	}
+-	(void)rd(a01_spi, SPI_STATUS0);          /* read clears */
+-	wr(a01_spi, SPI_CMD, cmd | SPI_CMD_ACT);
++	uint32_t cmd = rd(g_spi, SPI_CMD) & ~(CMD_ACT | CMD_RESUME);
++	wr(g_spi, SPI_CMD, cmd | (t_paused ? CMD_RESUME : CMD_ACT));
+ 	uint32_t st = 0;
+-	for (unsigned i = 0; i < 100000; i++) {
+-		st = rd(a01_spi, SPI_STATUS0);
+-		if (st) {
+-			break;
++	for (unsigned i = 0; i < 20000 && !st; i++) {
++		st = rd(g_spi, SPI_STATUS0);          /* read clears */
++		if (!st) {
++			delay(1);
+ 		}
+-		delay(1);
+ 	}
+ 	if (!st) {
+-		printf("A01CORE TOUCH: spi transfer timeout st1=%#x\n", rd(a01_spi, SPI_STATUS1));
++		LOG("spi timeout (len %u, cmd %#x, st1 %#x)", len, rd(g_spi, SPI_CMD), rd(g_spi, SPI_STATUS1));
+ 		return ETIMEDOUT;
+ 	}
++	t_paused = (st & ST0_PAUSE) != 0;
+ 	for (uint32_t i = 0; i < len; i += 4) {
+-		uint32_t w = rd(a01_spi, SPI_RX_DATA);
+-		memcpy(rx + i, &w, 4);
++		uint32_t w = rd(g_spi, SPI_RX_DATA);
++		if (rx) {
++			memcpy(rx + i, &w, MIN(4u, len - i));
++		}
+ 	}
+ 	return 0;
+ }
+ 
+-void a01core_touch_probe(void);
++static int
++spi_xfer(const uint8_t *tx, uint8_t *rx, uint32_t len)
++{
++	int error = 0;
++	spi_begin();
++	for (uint32_t off = 0; off < len && !error; off += SPI_FIFO) {
++		uint32_t n = MIN(SPI_FIFO, len - off);
++		error = spi_chunk(tx ? tx + off : NULL, rx ? rx + off : NULL, n);
++	}
++	spi_end();
++	return error;
++}
++
++/* ---- TCM messages --------------------------------------------------------- */
++/* Reads one message. *code = status/report code, payload (up to msg_cap) in msg[]. */
++static int
++tcm_read(uint8_t *code, uint32_t *len)
++{
++	uint8_t hdr[4];
++	int error = spi_xfer(NULL, hdr, sizeof(hdr));
++	if (error) {
++		return error;
++	}
++	if (hdr[0] != MSG_MARKER) {
++		return ENXIO;
++	}
++	*code = hdr[1];
++	*len = 0;
++	if (hdr[1] == ST_IDLE || hdr[1] == ST_BUSY || hdr[1] == ST_CONTINUED || hdr[1] == ST_INVALID) {
++		return 0;
++	}
++	uint32_t plen = le16(&hdr[2]);
++	uint32_t remaining = plen + 1;               /* payload + padding byte */
++	uint32_t space = rd_chunk ? rd_chunk - 2 : remaining;
++	uint32_t got = 0;
++	uint8_t tmp[RD_CHUNK + 2];
++	while (remaining) {
++		uint32_t n = MIN(remaining, MIN(space, (uint32_t)sizeof(tmp) - 2));
++		if (n == 1) {                            /* only the padding byte is left */
++			remaining = 0;
++			break;
++		}
++		error = spi_xfer(NULL, tmp, n + 2);
++		if (error) {
++			return error;
++		}
++		if (tmp[0] != MSG_MARKER || tmp[1] != ST_CONTINUED) {
++			VLOG("continued read: bad header %02x %02x", tmp[0], tmp[1]);
++			return EIO;
++		}
++		for (uint32_t i = 0; i < n; i++, got++) {
++			if (got < plen && got < msg_cap) {
++				msg[got] = tmp[2 + i];
++			} else if (got == plen && tmp[2 + i] != MSG_PADDING) {
++				VLOG("bad padding %02x", tmp[2 + i]);
++			}
++		}
++		remaining -= n;
++	}
++	*len = MIN(plen, msg_cap);
++	return 0;
++}
++
++/* Sends [cmd, len, payload] in chunks; chunk 0 = one transaction (host download). */
++static int
++tcm_send(uint8_t cmd, const uint8_t *payload, uint32_t len, uint32_t chunk)
++{
++	uint32_t total = len + 2;                    /* the two length bytes count as payload */
++	uint32_t space = chunk ? chunk - 1 : total;
++	uint8_t *buf = kalloc_data(MIN(total, space) + 1, Z_WAITOK);
++	if (!buf) {
++		return ENOMEM;
++	}
++	int error = 0;
++	for (uint32_t off = 0; off < total && !error; off += space) {
++		uint32_t n = MIN(space, total - off);
++		buf[0] = off ? CMD_CONTINUE_WRITE : cmd;
++		for (uint32_t i = 0; i < n; i++) {
++			uint32_t p = off + i;
++			buf[1 + i] = p == 0 ? (uint8_t)len : p == 1 ? (uint8_t)(len >> 8) : payload[p - 2];
++		}
++		error = spi_xfer(buf, NULL, n + 1);
++		if (off + n < total) {
++			delay(800);
++		}
++	}
++	kfree_data(buf, MIN(total, space) + 1);
++	return error;
++}
++
++static void handle_report(uint8_t code, uint32_t len);
++
++/* Command and response. Reports that arrive meanwhile go to handle_report(). */
++static int
++tcm_command(uint8_t cmd, const uint8_t *payload, uint32_t len, uint32_t chunk, uint32_t *resp_len)
++{
++	int error = tcm_send(cmd, payload, len, chunk);
++	if (error) {
++		LOG("command %#x: send failed (%d)", cmd, error);
++		return error;
++	}
++	for (uint32_t waited = 0; waited < RESP_TIMEOUT_MS; ) {
++		if (!attention() && (waited % 50u) != 0) {
++			t_msleep(2);
++			waited += 2;
++			continue;
++		}
++		uint8_t code;
++		uint32_t n;
++		error = tcm_read(&code, &n);
++		if (error == 0 && code >= RPT_IDENTIFY) {
++			handle_report(code, n);
++			continue;
++		}
++		if (error == 0 && code == ST_OK) {
++			if (resp_len) {
++				*resp_len = n;
++			}
++			return 0;
++		}
++		if (error == 0 && code != ST_IDLE && code != ST_BUSY && code != ST_INVALID) {
++			LOG("command %#x: status %#x", cmd, code);
++			return EIO;
++		}
++		t_msleep(2);
++		waited += 2;
++	}
++	LOG("command %#x: no response", cmd);
++	return ETIMEDOUT;
++}
++
++/* ---- firmware image -------------------------------------------------------- */
++static int
++fw_find(void)
++{
++	DTEntry node;
++	const uint64_t *reg;
++	unsigned int size;
++	if (SecureDTLookupEntry(NULL, "/chosen/memory-map", &node) != kSuccess ||
++	    SecureDTGetProperty(node, "TouchFirmware", (void const **)&reg, &size) != kSuccess ||
++	    size < 16 || reg[1] < 8) {
++		LOG("no touch firmware in the payload (mkpayload.py --blob TouchFirmware=td4150_a01core.img)");
++		return ENOENT;
++	}
++	const uint8_t *img = (const uint8_t *)ml_static_ptovirt((vm_offset_t)reg[0]);
++	uint64_t img_len = reg[1];
++	if (!img || le32(img) != IMG_MAGIC) {
++		LOG("touch firmware at %#llx: bad magic", reg[0]);
++		return EINVAL;
++	}
++	uint32_t areas = le32(img + 4);
++	for (uint32_t i = 0; i < areas && 8 + 4 * i + 4 <= img_len; i++) {
++		uint32_t at = le32(img + 8 + 4 * i);
++		if ((uint64_t)at + 36 > img_len || le32(img + at) != AREA_MAGIC) {
++			continue;
++		}
++		const char *id = (const char *)(img + at + 4);
++		uint32_t len = le32(img + at + 28), crc = le32(img + at + 32);
++		const uint8_t *data = img + at + 36;
++		if ((uint64_t)at + 36 + len > img_len || crc32_ieee(data, len) != crc) {
++			LOG("touch firmware area %u: bad length or checksum", i);
++			continue;
++		}
++		struct area *dst = !strncmp(id, "ROMBOOT_APP_CODE", 16) ? &fw_app :
++		    !strncmp(id, "APP_CONFIG", 10) ? &fw_appcfg :
++		    !strncmp(id, "DISPLAY", 7) ? &fw_disp : NULL;
++		if (dst) {
++			dst->data = data;
++			dst->len = len;
++		}
++	}
++	LOG("firmware: app %u, app config %u, display config %u bytes", fw_app.len, fw_appcfg.len, fw_disp.len);
++	return fw_app.len && fw_appcfg.len ? 0 : EINVAL;
++}
++
++/* ---- bring-up --------------------------------------------------------------- */
++enum { S_DETECT, S_ROMBOOT, S_WAIT_STATUS, S_APP, S_RUN } t_state;
++static uint16_t fw_status;
++static uint8_t id_mode;
++
++static void
++take_identify(uint32_t len)
++{
++	if (len < 24) {
++		return;
++	}
++	id_mode = msg[1];
++	uint32_t max_write = le16(&msg[22]);
++	wr_chunk = max_write ? MIN(max_write, WR_CHUNK_MAX) : WR_CHUNK_MAX;
++	rd_chunk = id_mode == MODE_ROMBOOT ? 0 : RD_CHUNK;
++	LOG("identify: version %u mode %#x part %.16s build %u max write %u",
++	    msg[0], id_mode, (const char *)&msg[2], le32(&msg[18]), max_write);
++}
++
++static int
++download_config(int type)
++{
++	const struct area *a = type == 1 ? &fw_appcfg : &fw_disp;
++	if (!a->len) {
++		LOG("firmware asks for config type %d that the image does not have", type);
++		return ENOENT;
++	}
++	uint32_t pad = type == 1 ? (8u - a->len % 8u) % 8u : 0;
++	uint32_t n = a->len + 2 + pad;
++	uint8_t *p = kalloc_data(n, Z_WAITOK | Z_ZERO);
++	if (!p) {
++		return ENOMEM;
++	}
++	uint32_t hdl_version = (fw_status >> 3) & 0xfu;
++	p[0] = hdl_version == 2 ? 2 : 1;
++	p[1] = (uint8_t)type;
++	memcpy(p + 2, a->data, a->len);
++	uint32_t rlen = 0;
++	int error = tcm_command(CMD_DOWNLOAD_CONFIG, p, n, wr_chunk, &rlen);
++	kfree_data(p, n);
++	if (!error && rlen >= 2) {
++		fw_status = (uint16_t)le16(msg);
++	}
++	LOG("config type %d (%u bytes): %d, status now %#x", type, a->len, error, fw_status);
++	return error;
++}
++
++static void
++handle_status(void)
++{
++	/* bit1 need display config, bit2 need app config, bits 3..6 HDL version */
++	for (int round = 0; round < 6 && (fw_status & 0x6u); round++) {
++		int error = (fw_status & 0x4u) ? download_config(1) : download_config(2);
++		if (error) {
++			return;
++		}
++	}
++	if (!(fw_status & 0x6u) && t_state < S_APP) {
++		t_state = S_APP;
++	}
++}
++
++static void
++report_touch(uint32_t len)
++{
++	uint16_t down = 0;
++	for (uint32_t o = 0; o + OBJ_BYTES <= len; o += OBJ_BYTES) {
++		uint32_t idx = msg[o], cls = msg[o + 1];
++		int x = (int)le16(&msg[o + 2]), y = (int)le16(&msg[o + 4]);
++		if (idx >= MAX_FINGERS || (cls != 1 && cls != 2)) {   /* finger / glove */
++			continue;
++		}
++		if (t_swap) {
++			int t = x; x = y; y = t;
++		}
++		x = x * PANEL_W / (max_x + 1);
++		y = y * PANEL_H / (max_y + 1);
++		if (t_flipx) {
++			x = PANEL_W - 1 - x;
++		}
++		if (t_flipy) {
++			y = PANEL_H - 1 - y;
++		}
++		x = MAX(0, MIN(PANEL_W - 1, x));
++		y = MAX(0, MIN(PANEL_H - 1, y));
++		down |= (uint16_t)(1u << idx);
++		last_x[idx] = (int16_t)x;
++		last_y[idx] = (int16_t)y;
++		sweet_hid_touch((int)idx, 1, x, y);
++	}
++	uint16_t lifted = down_mask_prev & (uint16_t)~down;
++	for (uint32_t i = 0; i < MAX_FINGERS; i++) {
++		if (lifted & (1u << i)) {
++			sweet_hid_touch((int)i, 0, last_x[i], last_y[i]);
++		}
++	}
++	down_mask_prev = down;
++}
++
++static void
++handle_report(uint8_t code, uint32_t len)
++{
++	switch (code) {
++	case RPT_IDENTIFY:
++		take_identify(len);
++		if (id_mode == MODE_ROMBOOT) {
++			t_state = S_ROMBOOT;
++		} else if (t_state == S_RUN) {
++			LOG("touch controller reset itself; reconfiguring");
++			t_state = S_APP;
++		}
++		break;
++	case RPT_STATUS:
++		if (len >= 2) {
++			fw_status = (uint16_t)le16(msg);
++			VLOG("status report %#x", fw_status);
++			if (t_state < S_RUN) {
++				t_state = S_WAIT_STATUS;
++			}
++		}
++		break;
++	case RPT_TOUCH:
++		if (t_state == S_RUN) {
++			report_touch(len);
++		}
++		break;
++	default:
++		VLOG("report %#x (%u bytes) ignored", code, len);
++		break;
++	}
++}
++
++static int
++romboot_download(void)
++{
++	uint32_t n = ROMBOOT_RESERVED + fw_app.len;
++	uint8_t *p = kalloc_data(n, Z_WAITOK | Z_ZERO);
++	if (!p) {
++		return ENOMEM;
++	}
++	p[0] = (uint8_t)(fw_app.len >> 16);
++	memcpy(p + ROMBOOT_RESERVED, fw_app.data, fw_app.len);
++	LOG("sending %u bytes of firmware", fw_app.len);
++	int error = tcm_command(CMD_ROMBOOT_DOWNLOAD, p, n, 0, NULL);
++	kfree_data(p, n);
++	if (!error) {
++		error = tcm_command(CMD_ROMBOOT_RUN_BL, NULL, 0, 0, NULL);
++	}
++	LOG("host download %s (%d)", error ? "FAILED" : "done", error);
++	t_state = S_WAIT_STATUS;
++	return error;
++}
++
++static int
++app_setup(void)
++{
++	uint32_t n = 0;
++	int error = tcm_command(CMD_GET_APP_INFO, NULL, 0, wr_chunk, &n);
++	if (error || n < 40) {
++		LOG("application info failed (%d, %u bytes)", error, n);
++		return error ? error : EIO;
++	}
++	uint32_t status = le16(&msg[2]);
++	cfg_size = (uint16_t)le16(&msg[12]);
++	max_x = (uint16_t)le16(&msg[32]);
++	max_y = (uint16_t)le16(&msg[34]);
++	if (!max_x || !max_y) {
++		max_x = PANEL_W - 1;
++		max_y = PANEL_H - 1;
++	}
++	LOG("application: status %u, max x %u, max y %u, objects %u, report config size %u",
++	    status, max_x, max_y, le16(&msg[36]), cfg_size);
++	static const uint8_t layout[] = {
++		TOUCH_FOREACH_ACTIVE,
++		TOUCH_OBJ_INDEX, 8, TOUCH_OBJ_CLASS, 8, TOUCH_OBJ_X, 16, TOUCH_OBJ_Y, 16,
++		TOUCH_FOREACH_END, TOUCH_END,
++	};
++	uint32_t len = MAX((uint32_t)cfg_size, (uint32_t)sizeof(layout));
++	uint8_t *cfg = kalloc_data(len, Z_WAITOK | Z_ZERO);
++	if (!cfg) {
++		return ENOMEM;
++	}
++	memcpy(cfg, layout, sizeof(layout));
++	error = tcm_command(CMD_SET_TOUCH_CFG, cfg, len, wr_chunk, NULL);
++	kfree_data(cfg, len);
++	LOG("touch report layout: %d", error);
++	if (!error) {
++		down_mask_prev = 0;
++		t_state = S_RUN;
++	}
++	return error;
++}
++
++static void
++touch_thread(__unused void *arg, __unused wait_result_t wres)
++{
++	int failures = 0;
++	t_msleep(1500);
++	msg = kalloc_data(msg_cap, Z_WAITOK | Z_ZERO);
++	if (!msg || fw_find() != 0) {
++		LOG("touch disabled");
++		return;
++	}
++	t_state = S_DETECT;
++	for (;;) {
++		if (failures > 8) {
++			LOG("giving up after repeated failures (boot-arg a01touch=2 for details)");
++			return;
++		}
++		switch (t_state) {
++		case S_DETECT: {
++			uint8_t code;
++			uint32_t n;
++			int error = tcm_read(&code, &n);
++			if (error == ENXIO) {
++				LOG("no TouchComm device on SPI0 CS0 (panel variant NT36525B is not supported, "
++				    "or SPI not working)");
++				failures += 3;
++				t_msleep(500);
++				break;
++			}
++			if (!error && code == RPT_IDENTIFY) {
++				take_identify(n);
++				t_state = id_mode == MODE_ROMBOOT ? S_ROMBOOT : S_APP;
++			} else if (!error && code >= RPT_IDENTIFY) {
++				handle_report(code, n);
++			} else if (!error && code == ST_IDLE) {
++				/* nothing pending: ask who it is */
++				(void)tcm_command(CMD_IDENTIFY, NULL, 0, wr_chunk, &n);
++				if (n >= 24) {
++					take_identify(n);
++					t_state = id_mode == MODE_ROMBOOT ? S_ROMBOOT : S_APP;
++				} else {
++					failures++;
++					t_msleep(100);
++				}
++			} else {
++				failures++;
++				t_msleep(100);
++			}
++			break;
++		}
++		case S_ROMBOOT:
++			if (romboot_download() != 0) {
++				failures++;
++				t_state = S_DETECT;
++				t_msleep(200);
++			}
++			break;
++		case S_WAIT_STATUS: {
++			/* the host-download firmware boots, identifies, then asks for configs */
++			uint32_t waited = 0;
++			while (t_state == S_WAIT_STATUS && waited < 2000) {
++				uint8_t code;
++				uint32_t n;
++				if (attention() && tcm_read(&code, &n) == 0 && code >= RPT_IDENTIFY) {
++					handle_report(code, n);
++					if (code == RPT_STATUS) {
++						handle_status();
++					}
++				} else {
++					t_msleep(5);
++					waited += 5;
++				}
++			}
++			if (t_state == S_WAIT_STATUS) {
++				if (fw_status & 0x6u) {
++					handle_status();
++				} else if (id_mode == MODE_APP || id_mode == MODE_HOSTDOWNLOAD) {
++					t_state = S_APP;
++				} else {
++					failures++;
++					t_state = S_DETECT;
++				}
++			}
++			break;
++		}
++		case S_APP:
++			if (app_setup() != 0) {
++				failures++;
++				t_state = S_DETECT;
++				t_msleep(200);
++			} else {
++				LOG("ready");
++				failures = 0;
++			}
++			break;
++		case S_RUN: {
++			uint8_t code;
++			uint32_t n;
++			if (!attention()) {
++				t_msleep(4);
++				break;
++			}
++			int error = tcm_read(&code, &n);
++			if (error) {
++				VLOG("read error %d", error);
++				t_msleep(10);
++				break;
++			}
++			if (code >= RPT_IDENTIFY) {
++				handle_report(code, n);
++				if (code == RPT_STATUS && (fw_status & 0x6u)) {
++					handle_status();
++				}
++			}
++			break;
++		}
++		}
++	}
++}
++
++static void
++pins_and_clock(void)
++{
++	for (unsigned i = 0; i < 4; i++) {
++		unsigned pin = spi_pins[i];
++		uint32_t v = rd(g_gpio, GPIO_MODE(pin));
++		v = (v & ~(0xfu << GPIO_MODE_SHIFT(pin))) | (1u << GPIO_MODE_SHIFT(pin));
++		wr(g_gpio, GPIO_MODE(pin), v);
++	}
++	uint32_t m = rd(g_gpio, GPIO_MODE(TS_ATTN_GPIO));
++	wr(g_gpio, GPIO_MODE(TS_ATTN_GPIO), m & ~(0xfu << GPIO_MODE_SHIFT(TS_ATTN_GPIO)));
++	wr(g_gpio, GPIO_DIR(TS_ATTN_GPIO), rd(g_gpio, GPIO_DIR(TS_ATTN_GPIO)) & ~(1u << (TS_ATTN_GPIO % 32u)));
++	wr(g_infra, INFRA_CG1_CLR, INFRA_CG1_SPI0);
++	delay(20);
++}
++
+ void
+ a01core_touch_probe(void)
+ {
+-	int mode = 0;
++	int mode = 1;
+ 	(void)PE_parse_boot_argn("a01touch", &mode, sizeof(mode));
++	(void)PE_parse_boot_argn("a01touch_hz", &t_hz, sizeof(t_hz));
++	(void)PE_parse_boot_argn("a01touch_flipx", &t_flipx, sizeof(t_flipx));
++	(void)PE_parse_boot_argn("a01touch_flipy", &t_flipy, sizeof(t_flipy));
++	(void)PE_parse_boot_argn("a01touch_swap", &t_swap, sizeof(t_swap));
+ 	if (mode <= 0) {
+-		printf("A01CORE TOUCH: no touch driver yet (boot-arg a01touch=1 probes)\n");
++		LOG("disabled (a01touch=0)");
+ 		return;
+ 	}
+-	a01_gpio = ml_io_map(A01_GPIO_PA, 0x1000);
+-	a01_infra = ml_io_map(A01_INFRA_AO_PA, 0x1000);
+-	a01_spi = ml_io_map(A01_SPI0_PA, 0x1000);
+-	if (!a01_gpio || !a01_infra || !a01_spi) {
+-		printf("A01CORE TOUCH: MMIO map failed\n");
+-		return;
++	t_verbose = mode >= 2;
++	if (t_hz < 100000u || t_hz > 20000000u) {
++		t_hz = 5000000u;
+ 	}
+-	a01_touch_dump();
+-	if (mode < 2) {
++	g_gpio = ml_io_map(GPIO_PA, 0x1000);
++	g_infra = ml_io_map(INFRA_AO_PA, 0x1000);
++	g_spi = ml_io_map(SPI0_PA, 0x1000);
++	if (!g_gpio || !g_infra || !g_spi) {
++		LOG("MMIO map failed");
+ 		return;
+ 	}
+-	for (unsigned i = 0; i < 4; i++) {
+-		unsigned pin = a01_spi_pins[i];
+-		wr(a01_gpio, GPIO_MODE_CLR(pin), 0xfu << GPIO_MODE_SHIFT(pin));
+-		wr(a01_gpio, GPIO_MODE_SET(pin), 1u << GPIO_MODE_SHIFT(pin));
+-	}
+-	wr(a01_infra, INFRA_CG1_CLR, INFRA_CG1_SPI0);
+-	delay(10);
+-	a01_touch_dump();
+-	uint8_t tx[16] = { 0 }, rx[16] = { 0 };
+-	int error = a01_spi_xfer(tx, rx, sizeof(rx));
+-	printf("A01CORE TOUCH: cs0 read (%d) %02x %02x %02x %02x %02x %02x %02x %02x "
+-	    "%02x %02x %02x %02x %02x %02x %02x %02x%s\n", error,
+-	    rx[0], rx[1], rx[2], rx[3], rx[4], rx[5], rx[6], rx[7],
+-	    rx[8], rx[9], rx[10], rx[11], rx[12], rx[13], rx[14], rx[15],
+-	    rx[0] == 0xa5 ? " (TCM marker: SPI path works)" : "");
+-	a01_touch_dump();
++	pins_and_clock();
++	spi_hw_setup();
++	VLOG("spi0 cfg0 %#x cfg1 %#x cfg2 %#x cmd %#x, cg1 %#x, attention %d",
++	    rd(g_spi, SPI_CFG0), rd(g_spi, SPI_CFG1), rd(g_spi, SPI_CFG2), rd(g_spi, SPI_CMD),
++	    rd(g_infra, INFRA_CG1_STA), attention());
++	thread_t thread;
++	if (kernel_thread_start(touch_thread, NULL, &thread) == KERN_SUCCESS) {
++		thread_deallocate(thread);
++	}
+ }
+ #endif /* ARM64_BOARD_CONFIG_A01CORE */
+-- 
+2.55.0.windows.5
+

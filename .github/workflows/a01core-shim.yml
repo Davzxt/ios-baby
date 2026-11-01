@@ -5,6 +5,13 @@ name: a01core-shim
 # stock boot.img (tools/a01core-pack-boot.py); it is never built here.
 on:
   workflow_dispatch:
+    inputs:
+      a01core_fb_pa:
+        description: Address the A01CORE kernel draws at (empty = 0xbe840000, the kernel's default). Use the same value in the xnu workflow.
+        default: ""
+      a01core_fb_stride:
+        description: Row bytes the kernel uses (empty = 2944). Same value as in the xnu workflow.
+        default: ""
   push:
     branches: [a01core]
     paths:
@@ -26,7 +33,20 @@ jobs:
           sudo apt-get install -y -q gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
 
       - name: Build a01core.Image
-        run: CROSS=aarch64-linux-gnu- sh shim/a01core/build.sh
+        run: |
+          A01CORE_DEFINES=""
+          case "${{ inputs.a01core_fb_pa }}" in
+            "") ;;
+            0x[0-9a-fA-F]*) A01CORE_DEFINES="-DA01CORE_FB_PA=${{ inputs.a01core_fb_pa }}UL" ;;
+            *) echo "a01core_fb_pa must be hex (0x...)"; exit 1 ;;
+          esac
+          case "${{ inputs.a01core_fb_stride }}" in
+            "") ;;
+            [0-9]*) A01CORE_DEFINES="$A01CORE_DEFINES -DA01CORE_FB_STRIDE=${{ inputs.a01core_fb_stride }}U" ;;
+            *) echo "a01core_fb_stride must be a decimal byte count"; exit 1 ;;
+          esac
+          export A01CORE_DEFINES
+          CROSS=aarch64-linux-gnu- sh shim/a01core/build.sh
 
       - name: Disassembly sanity (no LSE, no FP/SIMD in the loader)
         run: |

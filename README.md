@@ -13,10 +13,9 @@ projetos da comunidade [hackiosx](https://github.com/dipa-studio/ios-sweet):
 O que este branch acrescenta é a camada MediaTek/A01 Core: shim, device tree, eMMC, botões,
 tela, sonda do toque e ferramentas de Odin.
 
-> **Leia antes.** Nada aqui foi executado no telefone. O código foi escrito a partir do
-> device tree, da configuração do kernel e do `boot.img` oficiais do A01 Core, e do código dos
-> ports que já funcionam. Os patches do kernel aplicam limpos, mas **ainda não foram
-> compilados**, porque isso exige macOS/Xcode, que o GitHub Actions do seu fork fornece. O
+> **Leia antes.** Nada aqui foi executado no telefone ainda. O código foi escrito a partir do
+> device tree, da configuração do kernel e do código-fonte GPL oficiais do A01 Core, e do
+> código dos ports que já funcionam. O kernel compila no GitHub Actions (macOS). O
 > caminho até a tela inicial do iOS é uma sequência de marcos, cada um com algo para verificar
 > na tela: veja **[docs/A01CORE_PORTING.md](docs/A01CORE_PORTING.md)**.
 > Instalar apaga o Android e exige o bootloader desbloqueado.
@@ -27,11 +26,12 @@ tela, sonda do toque e ferramentas de Odin.
 | --- | --- |
 | Boot pelo LK da Samsung/MediaTek em 64 bits | Escrito (`shim/a01core`, `tools/a01core-pack-boot.py`). **Maior incógnita:** o kernel original é de 32 bits |
 | Sonda de hardware (tela, RAM, reservas, watchdog) | Escrita. É o marco 1 |
-| XNU para MT6739 (máquina `A01CORE`) | Patch `0300`: GICv3, timer de 13 MHz/INTID 27, 4 núcleos via PSCI, páginas de 4 KB, Cortex-A53 |
+| XNU para MT6739 (máquina `A01CORE`) | Patch `0300`: GICv3, timer de 13 MHz/INTID 27, 4 núcleos via PSCI, páginas de 4 KB, Cortex-A53. **Compila no GitHub Actions** (01/11/2026), 0 instruções LSE |
 | eMMC (MSDC0) leitura/escrita, raiz HFS+ no `userdata` | Patch `0301` (PIO, usa o estado em que o LK deixa o controlador) |
-| Tela | Framebuffer do LK, canvas de iPhone XR escalado por CPU para 720×1520 (patch `0300`) |
+| Tela | Framebuffer do LK, canvas de iPhone XR escalado por CPU para 720×1520 (patch `0300`). O shim move a imagem para o endereço compilado no kernel, sem precisar recompilar |
 | Botões Power, Volume +/− | Patch `0302` (keypad + PMIC MT6357; Volume − pode virar Home) |
-| Toque (TD4150 Synaptics / NT36525B Novatek, SPI) | **Só a sonda** (patch `0303`). Falta portar o envio do firmware "zero flash" e o protocolo |
+| Toque TD4150 (Synaptics, SPI) | Driver completo (patch `0304`): envio do firmware "zero flash", configurações, até 10 dedos. Precisa do `td4150_a01core.img` no payload |
+| Toque NT36525B (variante Novatek) | Não suportado |
 | Bateria | Fixa em 100 % (herdado dos ports base) |
 | GPU, Wi-Fi, Bluetooth, modem, áudio, câmera, sensores, GPS, NFC, Face ID | **Não existem** neste port. Veja o porquê em [docs/A01CORE_HARDWARE.md](docs/A01CORE_HARDWARE.md) |
 
@@ -40,7 +40,7 @@ tela, sonda do toque e ferramentas de Odin.
 | Caminho | O que é |
 | --- | --- |
 | `shim/a01core/` | Loader que o LK inicia: desliga o watchdog, desce de EL2 para EL1, lê o FDT do LK, acha o framebuffer pelo DISP_OVL0, confere a RAM e inicia o XNU. Sem kernel anexado, funciona como sonda |
-| `xnu/patches/0300-0303-*` | Patches do kernel para a máquina `A01CORE` (aplicados depois dos 204 da base) |
+| `xnu/patches/0300-0304-*` | Patches do kernel para a máquina `A01CORE` (aplicados depois dos 204 da base) |
 | `tools/mkadt_a01core.py` | Device tree da Apple (ADT) para o A01 Core |
 | `tools/a01core-pack-boot.py` | Monta o `boot.img` a partir do **seu** `boot.img` original (header v2, gzip, `bootopt` de 64 bits) |
 | `tools/a01core-odin-pack.py` | `vbmeta` com verificação desligada e pacotes `.tar.md5` para o Odin |

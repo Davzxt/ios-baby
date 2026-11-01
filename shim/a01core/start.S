@@ -46,7 +46,8 @@ entry:
     ubfx x1, x1, #24, #4     /* GIC system-register interface present? */
     cbz x1, 1f
     mrs x1, s3_4_c12_c9_5    /* ICC_SRE_EL2 */
-    orr x1, x1, #0x9         /* SRE | Enable (EL1 may use ICC_SRE_EL1) */
+    mov x2, #0x9             /* SRE | Enable (EL1 may use ICC_SRE_EL1); 0x9 is */
+    orr x1, x1, x2           /* not encodable as a logical immediate */
     msr s3_4_c12_c9_5, x1
     isb
     msr s3_4_c12_c11_0, xzr  /* ICH_HCR_EL2: no virtual CPU interface */
