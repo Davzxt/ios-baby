@@ -70,8 +70,8 @@ pkg-config = 'pkg-config'
 [built-in options]
 c_args = ['-miphoneos-version-min=$MIN_IOS', '-isysroot', '$SDK', '-I$HERE/compat', '-I$WORK/libdrm', '-I$WORK/libdrm/include/drm']
 cpp_args = ['-miphoneos-version-min=$MIN_IOS', '-isysroot', '$SDK']
-c_link_args = ['-miphoneos-version-min=$MIN_IOS', '-isysroot', '$SDK', '-L$WORK/drm-standin', '-ldrm', '-Wl,-undefined,dynamic_lookup']
-cpp_link_args = ['-miphoneos-version-min=$MIN_IOS', '-isysroot', '$SDK', '-L$WORK/drm-standin', '-ldrm', '-Wl,-undefined,dynamic_lookup']
+c_link_args = ['-miphoneos-version-min=$MIN_IOS', '-isysroot', '$SDK', '-L$WORK/drm-standin', '-ldrm']
+cpp_link_args = ['-miphoneos-version-min=$MIN_IOS', '-isysroot', '$SDK', '-L$WORK/drm-standin', '-ldrm']
 [properties]
 needs_exe_wrapper = true
 pkg_config_libdir = '$WORK/pc'

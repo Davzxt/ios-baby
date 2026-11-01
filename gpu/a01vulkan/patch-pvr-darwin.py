@@ -12,3 +12,16 @@ if old in t and "A01: DRM format modifiers" not in t:
     t = t[:i] + "#if DETECT_OS_LINUX || DETECT_OS_BSD /* A01: DRM format modifiers are Linux/BSD only (vk_image.h) */\n" + t[i:j] + "#endif\n" + t[j:]
     f.write_text(t)
     print("pvr_image.c: DRM modifier block guarded")
+
+# Mesa's weak entrypoints may stay undefined on Darwin; only the driver's own link allows it
+# (a global -undefined dynamic_lookup would fool meson's compiler checks).
+f = mesa / "src/imagination/vulkan/meson.build"
+t = f.read_text()
+old = "  link_args : [
+    vulkan_icd_link_args,"
+if old in t and "dynamic_lookup" not in t:
+    t = t.replace(old, "  link_args : [
+    '-Wl,-undefined,dynamic_lookup',
+    vulkan_icd_link_args,", 1)
+    f.write_text(t)
+    print("meson.build: driver links with -undefined dynamic_lookup")
