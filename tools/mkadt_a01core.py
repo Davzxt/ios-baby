@@ -21,7 +21,7 @@ import adt
 import mkadt
 
 RAM_BASE = 0x80000000        # free 511 MiB window on the 2 GB A01 Core (probe 2026-11-01)
-RAM_MB = 511
+RAM_MB = 1023      # 0x80000000-0xbff00000: both ranks; rank 1 dummy-read hole is read-only DRAMC traffic
 SOC_BASE = 0x0c000000        # arm-io ranges base (GIC); child regs are relative
 SOC_SIZE = 0x34000000        # up to the DRAM at 0x40000000
 GICD, GICD_SIZE = 0x0c000000, 0x40000

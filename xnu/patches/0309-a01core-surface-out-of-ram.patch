@@ -1,0 +1,26 @@
+From ee8dc2edf38e501946457927ad65312d2968444c Mon Sep 17 00:00:00 2001
+From: a01core <a01core@localhost>
+Date: Sun, 1 Nov 2026 15:15:56 -0300
+Subject: [PATCH] 0309 a01core: scaled surface at 0x78000000 so XNU can take
+ both 1 GiB DRAM ranks
+
+---
+ pexpert/pexpert/arm64/A5XELTE.h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/pexpert/pexpert/arm64/A5XELTE.h b/pexpert/pexpert/arm64/A5XELTE.h
+index 3c6186d..573b4b0 100644
+--- a/pexpert/pexpert/arm64/A5XELTE.h
++++ b/pexpert/pexpert/arm64/A5XELTE.h
+@@ -67,7 +67,7 @@
+ /* Default surface of the scaled canvas: physical RAM outside XNU's window,
+  * checked against the live reserved-memory map by shim/a01core. */
+ #ifndef A01CORE_SCALED_SURFACE_PA
+-#define A01CORE_SCALED_SURFACE_PA     0xa0000000ULL
++#define A01CORE_SCALED_SURFACE_PA     0x78000000ULL  /* free 128 MiB below 0x7ffbf000; 0x80000000+ is XNU RAM */
+ #endif
+ #else
+ #define SWEET_SMP_MAX_CPUS            1
+-- 
+2.55.0.windows.5
+

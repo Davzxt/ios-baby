@@ -49,8 +49,8 @@
 
 /* Defaults that the kernel build and mkadt_a01core.py also use. */
 #define DEFAULT_RAM_BASE   0x80000000UL   /* free on the 2 GB A01 Core (probe 2026-11-01) */
-#define DEFAULT_RAM_SIZE   0x1ff00000UL
-#define SURFACE_PA         0xa0000000UL   /* A01CORE_SCALED_SURFACE_PA */
+#define DEFAULT_RAM_SIZE   0x3ff00000UL   /* both 1 GiB ranks, across rank 1's dummy-read hole */
+#define SURFACE_PA         0x78000000UL   /* A01CORE_SCALED_SURFACE_PA: free 128 MiB below 0x7ffbf000 */
 #define SURFACE_SIZE       0x01000000UL   /* 828x1792x4 rounded up */
 /* Where the A01CORE kernel was compiled to draw (pexpert A5XELTE.h A01CORE_FB_PA /
  * A01CORE_FB_STRIDE). Build both with the same values; these are the defaults. */
@@ -236,6 +236,20 @@ static int prefix(const char *str, const char *pre)
             return 0;
     return 1;
 }
+static int contains(const char *str, const char *sub)
+{
+    for (; *(volatile const char *)str; str++) {
+        const char *a = str, *b = sub;
+        while (*b && *(volatile const char *)a == *b) {
+            a++;
+            b++;
+        }
+        if (!*b)
+            return 1;
+    }
+    return 0;
+}
+
 static int streq(const char *a, const char *b)
 {
     while (*a && *a == *b) {
@@ -247,6 +261,8 @@ static int streq(const char *a, const char *b)
 
 struct range {
     uint64_t base, size;
+    const char *name;   /* reserved-memory node name, if any */
+    int dummy_read;     /* DRAMC dummy-read target: read by the DRAM controller only */
 };
 static struct range mem[8], rsv[MAX_RANGES];
 static unsigned nmem, nrsv;
@@ -259,6 +275,8 @@ static void add(struct range *r, unsigned *n, unsigned max, uint64_t base, uint6
     if (*n < max && size) {
         r[*n].base = base;
         r[*n].size = size;
+        r[*n].name = 0;
+        r[*n].dummy_read = 0;
         (*n)++;
     }
 }
@@ -284,6 +302,7 @@ static int fdt_scan(uintptr_t fdt)
     }
     int depth = 0;
     int in_mem = 0, in_rsv = 0, in_chosen = 0;
+    const char *rsv_node = 0;
     uintptr_t p = st;
     for (unsigned guard = 0; guard < 400000; guard++) {
         uint32_t tok = be32(p);
@@ -296,6 +315,8 @@ static int fdt_scan(uintptr_t fdt)
                 in_rsv = prefix(name, "reserved-memory");
                 in_chosen = streq(name, "chosen");
             }
+            if (depth == 3 && in_rsv)
+                rsv_node = name;
             while (*(volatile char *)p)
                 p++;
             p = (p + 4) & ~(uintptr_t)3;
@@ -311,8 +332,14 @@ static int fdt_scan(uintptr_t fdt)
                 for (uint32_t o = 0; o + 16 <= len; o += 16) {
                     if (in_mem)
                         add(mem, &nmem, 8, be64(val + o), be64(val + o + 8));
-                    else
+                    else {
+                        unsigned before = nrsv;
                         add(rsv, &nrsv, MAX_RANGES, be64(val + o), be64(val + o + 8));
+                        if (nrsv > before) {
+                            rsv[before].name = rsv_node;
+                            rsv[before].dummy_read = rsv_node && contains(rsv_node, "dummy_read");
+                        }
+                    }
                 }
             } else if (in_chosen && depth == 2) {
                 if (streq(pname, "atag,videolfb-fb_base_l") && len >= 4) {
@@ -350,7 +377,7 @@ static int overlaps(uint64_t a, uint64_t as, uint64_t b, uint64_t bs)
 static int first_conflict(uint64_t base, uint64_t size)
 {
     for (unsigned i = 0; i < nrsv; i++)
-        if (overlaps(base, size, rsv[i].base, rsv[i].size))
+        if (!rsv[i].dummy_read && overlaps(base, size, rsv[i].base, rsv[i].size))
             return (int)i;
     return -1;
 }
@@ -671,7 +698,11 @@ uintptr_t a01_main(uintptr_t fdt, uint64_t entry_el, uint64_t sctlr)
         hex(rsv[i].base);
         s("+");
         hex(rsv[i].size);
-        line_end(WHITE);
+        if (rsv[i].name) {
+            s(" ");
+            s(rsv[i].name);
+        }
+        line_end(rsv[i].dummy_read ? YELLOW : WHITE);
     }
     report_framebuffer();
     if (!fdt_ok || !nmem)
