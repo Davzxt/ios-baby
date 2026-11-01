@@ -1,0 +1,112 @@
+From c08163a05ad43aec9d1f8b4069f03ed5996f0dfe Mon Sep 17 00:00:00 2001
+From: a01core <a01core@localhost>
+Date: Sun, 1 Nov 2026 16:32:15 -0300
+Subject: [PATCH] 0313 a01core: hole pages stay in vm_pages[] but never reach
+ the free list
+
+---
+ osfmk/arm/pmap/pmap.c  | 21 +++++++++------------
+ osfmk/vm/vm_resident.c | 19 +++++++++++++++++++
+ 2 files changed, 28 insertions(+), 12 deletions(-)
+
+diff --git a/osfmk/arm/pmap/pmap.c b/osfmk/arm/pmap/pmap.c
+index f7f71f4..6988ab8 100644
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -2633,21 +2633,24 @@ a01_load_ram_holes(pmap_paddr_t first, pmap_paddr_t end)
+ 		a01_ram_holes[a01_n_ram_holes].start = s;
+ 		a01_ram_holes[a01_n_ram_holes].end = e;
+ 		a01_n_ram_holes++;
+-		avail_page_count -= (unsigned int)atop(e - s);
+-		kprintf("A01CORE RAM: hole %#llx-%#llx kept away from the VM\n",
++		kprintf("A01CORE RAM: hole %#llx-%#llx kept off the free list\n",
+ 		    (unsigned long long)s, (unsigned long long)e);
+ 	}
+ }
+ 
+-static pmap_paddr_t
+-a01_skip_ram_hole(pmap_paddr_t pa)
++/* vm_resident.c: hole pages are initialized like any other (vm_pages[] must stay
++ * contiguous) but never released to the free list. */
++bool a01core_ram_hole_page(ppnum_t pn);
++bool
++a01core_ram_hole_page(ppnum_t pn)
+ {
++	pmap_paddr_t pa = ptoa(pn);
+ 	for (unsigned int i = 0; i < a01_n_ram_holes; i++) {
+ 		if (pa >= a01_ram_holes[i].start && pa < a01_ram_holes[i].end) {
+-			return a01_ram_holes[i].end;
++			return true;
+ 		}
+ 	}
+-	return pa;
++	return false;
+ }
+ #endif
+ 
+@@ -2707,12 +2710,6 @@ pmap_next_page(
+ 	}
+ 
+ 
+-#if defined(ARM64_BOARD_CONFIG_A01CORE)
+-	for (pmap_paddr_t next = a01_skip_ram_hole(first_avail); next != first_avail;
+-	    next = a01_skip_ram_hole(first_avail)) {
+-		first_avail = next;
+-	}
+-#endif
+ 	if (first_avail != avail_end) {
+ 		*pnum = (ppnum_t)atop(first_avail);
+ 		first_avail += PAGE_SIZE;
+diff --git a/osfmk/vm/vm_resident.c b/osfmk/vm/vm_resident.c
+index 6394730..f256bac 100644
+--- a/osfmk/vm/vm_resident.c
++++ b/osfmk/vm/vm_resident.c
+@@ -658,12 +658,19 @@ ppnum_t delay_above_pnum = PPNUM_MAX;
+ /*
+  * Get and initialize the next delayed page.
+  */
++#if defined(ARM64_BOARD_CONFIG_A01CORE)
++extern bool a01core_ram_hole_page(ppnum_t pn);
++#endif
++
+ static vm_page_t
+ vm_get_delayed_page(int grab_options)
+ {
+ 	vm_page_t p;
+ 	ppnum_t   pnum;
+ 
++#if defined(ARM64_BOARD_CONFIG_A01CORE)
++again:
++#endif
+ 	/*
+ 	 * Get a new page if we have one.
+ 	 */
+@@ -695,6 +702,12 @@ vm_get_delayed_page(int grab_options)
+ 	++vm_pages_count;
+ 	++vm_page_pages;
+ 	vm_free_page_unlock();
++#if defined(ARM64_BOARD_CONFIG_A01CORE)
++	/* firmware-reserved hole: keep its vm_pages[] slot (index == phys order), stay wired */
++	if (a01core_ram_hole_page(pnum)) {
++		goto again;
++	}
++#endif
+ 
+ 	/*
+ 	 * These pages were initially counted as wired, undo that now.
+@@ -3849,6 +3862,12 @@ vm_page_release_startup(
+ {
+ 	vm_page_queue_t queue_free;
+ 
++#if defined(ARM64_BOARD_CONFIG_A01CORE)
++	if (a01core_ram_hole_page(VM_PAGE_GET_PHYS_PAGE(mem))) {
++		return;                 /* firmware-reserved hole: never on the free list */
++	}
++#endif
++
+ 	if (vm_lopage_free_count < vm_lopage_free_limit &&
+ 	    VM_PAGE_GET_PHYS_PAGE(mem) < max_valid_low_ppnum) {
+ 		mem->vmp_lopage = TRUE;
+-- 
+2.55.0.windows.5
+
