@@ -18,6 +18,7 @@ cd "$WORK"
 [ -d libdrm ] || git clone -q --depth 1 --branch "$LIBDRM_TAG" https://gitlab.freedesktop.org/mesa/drm.git libdrm
 python3 "$MESA/patch-mesa.py" mesa || echo "patch-mesa.py: some S7 patches did not apply to $MESA_TAG"
 python3 "$HERE/patch-ge8100.py" mesa
+python3 "$HERE/patch-pvr-darwin.py" mesa
 
 # libdrm: only headers and link symbols are needed here (the A01 kernel interface is the
 # pvr "srv" winsys, which talks to the GE8100 driver directly, not through DRM).
@@ -60,7 +61,7 @@ ar = ['xcrun', '--sdk', 'iphoneos', 'ar']
 strip = ['xcrun', '--sdk', 'iphoneos', 'strip']
 pkg-config = 'pkg-config'
 [built-in options]
-c_args = ['-miphoneos-version-min=$MIN_IOS', '-isysroot', '$SDK', '-I$WORK/libdrm', '-I$WORK/libdrm/include/drm']
+c_args = ['-miphoneos-version-min=$MIN_IOS', '-isysroot', '$SDK', '-I$HERE/compat', '-I$WORK/libdrm', '-I$WORK/libdrm/include/drm']
 cpp_args = ['-miphoneos-version-min=$MIN_IOS', '-isysroot', '$SDK']
 c_link_args = ['-miphoneos-version-min=$MIN_IOS', '-isysroot', '$SDK']
 cpp_link_args = ['-miphoneos-version-min=$MIN_IOS', '-isysroot', '$SDK']
