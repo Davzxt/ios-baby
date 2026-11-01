@@ -1,0 +1,523 @@
+From c656b9d7f6fa52d57582d2c883d8310beda4c5bc Mon Sep 17 00:00:00 2001
+From: a01core <a01core@localhost>
+Date: Sun, 1 Nov 2026 13:49:52 -0300
+Subject: [PATCH] 0308 a01core: I2C master (hw FIFO + gpio bus), S2MU005 fuel
+ gauge, chip identity checks
+
+---
+ bsd/conf/files                    |   1 +
+ bsd/dev/a01core_i2c.c             | 436 ++++++++++++++++++++++++++++++
+ iokit/Kernel/arm/SweetBattery.cpp |  20 +-
+ iokit/bsddev/IOKitBSDInit.cpp     |   2 +
+ 4 files changed, 454 insertions(+), 5 deletions(-)
+ create mode 100644 bsd/dev/a01core_i2c.c
+
+diff --git a/bsd/conf/files b/bsd/conf/files
+index f4bc22b..71678f8 100644
+--- a/bsd/conf/files
++++ b/bsd/conf/files
+@@ -117,6 +117,7 @@ bsd/dev/a5xelte_touch.c			standard
+ bsd/dev/a01core_keys.c			standard
+ bsd/dev/a01core_touch.c			standard
+ bsd/dev/a01core_power.c			standard
++bsd/dev/a01core_i2c.c			standard
+ bsd/dev/sweet_sample.c			standard
+ bsd/dev/sweet_keys.c			standard
+ bsd/dev/sweet_touch.c			standard
+diff --git a/bsd/dev/a01core_i2c.c b/bsd/dev/a01core_i2c.c
+new file mode 100644
+index 0000000..d5eccd7
+--- /dev/null
++++ b/bsd/dev/a01core_i2c.c
+@@ -0,0 +1,436 @@
++/*
++ * Galaxy A01 Core (MT6739): I2C master (hardware controllers 0..5, FIFO mode) and the
++ * bit-banged GPIO bus of the accelerometer, plus the first users:
++ *   - S2MU005 fuel gauge (i2c1 @ 0x3b): battery voltage, state of charge, current;
++ *   - identity checks of the S2MU005 charger (i2c2 @ 0x3d), AW8896 speaker amp
++ *     (i2c4 @ 0x34, ID 0x0310) and LIS2DS accelerometer (gpio bus @ 0x1d, WHO_AM_I 0x43).
++ *
++ * Facts from the SM-A013 GPL kernel (A013GXXU4AVF4):
++ *   drivers/i2c/busses/i2c-mtk.{c,h}: v1 register layout (16-bit registers), FIFO path,
++ *     CONTROL = ACKERR_DET_EN | CLK_EXT_EN (+ DIR_CHANGE | RS for write-then-read),
++ *     EXT_CONF 0x8001 at <= 100 kHz, DELAY_LEN 0x0a, open drain IO_CONFIG 3 | aed << 4,
++ *     CLOCK_DIV (div-1) << 8 | (div-1), speed = src / div / (2 * sample * step).
++ *   arch/arm/boot/dts/mt6739.dts: i2c0..5 at 0x11007000, 0x11008000, 0x11009000,
++ *     0x1100f000, 0x11011000, 0x11016000, clock-div 5, aed 0x1f; i2c_common:
++ *     set_dt_div, set_ltiming, ext_time_config 0x1801 (only used above 100 kHz).
++ *   drivers/clk/mediatek/clk-mt6739.c: i2c_sel parents 26 MHz / 48 MHz / 104 MHz;
++ *     gates infra0 (clr 0x84) bits 11..14 = i2c0..3, infra2 (clr 0xa8) bit 7 = i2c4,
++ *     bit 18 = i2c5.
++ *   stock dtbo: s2mu005-fuelgauge@3b on i2c1, s2mu005mfd@3d on i2c2 (eif dtsi),
++ *     speaker_amp@34 on i2c4, i2c-gpio "i2c@23" sda GPIO30 scl GPIO28 2 us, lis2ds@1d.
++ *   drivers/battery_v2/s2mu005_fuelgauge.c: RVBAT 0x04 (mV = raw * 1000 >> 13),
++ *     RCUR_CC 0x06 (two's complement, mA = raw * 1000 >> 12, negative = charging),
++ *     RSOC 0x08 (0.01 % = raw * 10000 >> 14); registers read twice until stable.
++ *
++ * Timing: the source clock LK left on i2c_sel is not known, so the divider is chosen for
++ * the fastest parent (104 MHz / 5): 100 kHz there, slower (still valid) otherwise.
++ *
++ * Boot-args: a01i2c=0 disables everything; a01i2c=2 logs every transfer.
++ */
++#if defined(ARM64_BOARD_CONFIG_A01CORE)
++#include <sys/param.h>
++#include <sys/systm.h>
++#include <sys/errno.h>
++#include <kern/locks.h>
++#include <machine/machine_routines.h>
++#include <pexpert/pexpert.h>
++
++extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
++extern void delay(int usec);
++
++int a01core_i2c_xfer(unsigned bus, uint8_t addr, const uint8_t *wr, unsigned wlen,
++    uint8_t *rd, unsigned rlen);
++int a01core_fg_read(unsigned *soc_x100, unsigned *mv, int *ma);
++void a01core_i2c_probe(void);
++
++#define I2C_DATA_PORT      0x00u
++#define I2C_SLAVE_ADDR     0x04u
++#define I2C_INTR_MASK      0x08u
++#define I2C_INTR_STAT      0x0cu
++#define I2C_CONTROL        0x10u
++#define I2C_TRANSFER_LEN   0x14u
++#define I2C_TRANSAC_LEN    0x18u
++#define I2C_DELAY_LEN      0x1cu
++#define I2C_TIMING         0x20u
++#define I2C_START          0x24u
++#define I2C_EXT_CONF       0x28u
++#define I2C_LTIMING        0x2cu
++#define I2C_FIFO_ADDR_CLR  0x38u
++#define I2C_IO_CONFIG      0x40u
++#define I2C_HS             0x48u
++#define I2C_SOFTRESET      0x50u
++#define I2C_TRANSFER_AUX   0x6cu
++#define I2C_CLOCK_DIV      0x70u
++
++#define INT_ARB_LOST       (1u << 3)
++#define INT_HS_NACKERR     (1u << 2)
++#define INT_ACKERR         (1u << 1)
++#define INT_COMP           (1u << 0)
++#define INT_ALL            0x1ffu
++#define CTL_RS             (1u << 1)
++#define CTL_CLK_EXT_EN     (1u << 3)
++#define CTL_DIR_CHANGE     (1u << 4)
++#define CTL_ACKERR_DET_EN  (1u << 5)
++
++#define I2C_FIFO_BYTES     8u
++#define CLOCK_DIV          5u
++#define SAMPLE_CNT         8u     /* 104 MHz / 5 / (2 * 8 * 13) = 100 kHz */
++#define STEP_CNT           13u
++
++static const uint32_t bus_pa[6] = { 0x11007000, 0x11008000, 0x11009000, 0x1100f000, 0x11011000, 0x11016000 };
++/* clock gate: register offset (clr) and bit */
++static const uint16_t gate_clr[6] = { 0x84, 0x84, 0x84, 0x84, 0xa8, 0xa8 };
++static const uint8_t gate_bit[6] = { 11, 12, 13, 14, 7, 18 };
++
++#define INFRA_AO_PA        0x10001000u
++#define GPIO_PA            0x10005000u
++#define GPIO_DIR(n)        (0x000u + ((n) / 32u) * 0x10u)
++#define GPIO_DOUT(n)       (0x100u + ((n) / 32u) * 0x10u)
++#define GPIO_DIN(n)        (0x200u + ((n) / 32u) * 0x10u)
++#define GPIO_MODE(n)       (0x300u + ((n) / 8u) * 0x10u)
++#define GPIO_MODE_SHIFT(n) (((n) % 8u) * 4u)
++#define SW_BUS             23u     /* the stock "i2c@23" i2c-gpio bus */
++#define SW_SDA             30u
++#define SW_SCL             28u
++#define SW_DELAY_US        5
++
++static vm_offset_t g_bus[6], g_infra, g_gpio;
++static int g_ready[6], g_verbose, g_disabled;
++static LCK_GRP_DECLARE(a01_i2c_grp, "a01core_i2c");
++static LCK_MTX_DECLARE(a01_i2c_lock, &a01_i2c_grp);
++
++static uint32_t
++rd32(vm_offset_t b, uint32_t o)
++{
++	uint32_t v = *(volatile uint32_t *)(b + o);
++	__asm__ volatile ("dmb oshld" ::: "memory");
++	return v;
++}
++
++static void
++wr32(vm_offset_t b, uint32_t o, uint32_t v)
++{
++	__asm__ volatile ("dmb oshst" ::: "memory");
++	*(volatile uint32_t *)(b + o) = v;
++	__asm__ volatile ("dsb osh" ::: "memory");
++}
++
++static uint16_t
++rd16(vm_offset_t b, uint32_t o)
++{
++	uint16_t v = *(volatile uint16_t *)(b + o);
++	__asm__ volatile ("dmb oshld" ::: "memory");
++	return v;
++}
++
++static void
++wr16(vm_offset_t b, uint32_t o, uint16_t v)
++{
++	__asm__ volatile ("dmb oshst" ::: "memory");
++	*(volatile uint16_t *)(b + o) = v;
++	__asm__ volatile ("dsb osh" ::: "memory");
++}
++
++static int
++hw_bus_init(unsigned bus)
++{
++	if (g_ready[bus]) {
++		return 0;
++	}
++	if (!g_infra) {
++		g_infra = ml_io_map(INFRA_AO_PA, 0x1000);
++	}
++	if (!g_bus[bus]) {
++		g_bus[bus] = ml_io_map(bus_pa[bus], 0x1000);
++	}
++	if (!g_infra || !g_bus[bus]) {
++		return ENOMEM;
++	}
++	wr32(g_infra, gate_clr[bus], 1u << gate_bit[bus]);   /* ungate the controller clock */
++	delay(5);
++	vm_offset_t b = g_bus[bus];
++	wr16(b, I2C_SOFTRESET, 1);
++	delay(5);
++	wr16(b, I2C_CLOCK_DIV, (uint16_t)(((CLOCK_DIV - 1u) << 8) | (CLOCK_DIV - 1u)));
++	wr16(b, I2C_TIMING, (uint16_t)(((SAMPLE_CNT - 1u) << 8) | (STEP_CNT - 1u)));
++	wr16(b, I2C_LTIMING, (uint16_t)(((SAMPLE_CNT - 1u) << 6) | (STEP_CNT - 1u)));
++	wr16(b, I2C_HS, 0);
++	wr16(b, I2C_EXT_CONF, 0x8001);
++	wr16(b, I2C_DELAY_LEN, 0x000a);
++	wr16(b, I2C_IO_CONFIG, (uint16_t)(0x0003u | (0x1fu << 4)));
++	g_ready[bus] = 1;
++	return 0;
++}
++
++/* One FIFO transaction: write wlen bytes, then (optionally, repeated start) read rlen. */
++static int
++hw_xfer(unsigned bus, uint8_t addr, const uint8_t *wr, unsigned wlen, uint8_t *rd, unsigned rlen)
++{
++	if (wlen > I2C_FIFO_BYTES || rlen > I2C_FIFO_BYTES || (!wlen && !rlen)) {
++		return EINVAL;
++	}
++	int error = hw_bus_init(bus);
++	if (error) {
++		return error;
++	}
++	vm_offset_t b = g_bus[bus];
++	uint16_t control = CTL_ACKERR_DET_EN | CTL_CLK_EXT_EN;
++	int wrrd = wlen && rlen;
++	if (wrrd) {
++		control |= CTL_DIR_CHANGE | CTL_RS;
++	}
++	wr16(b, I2C_CONTROL, control);
++	wr16(b, I2C_SLAVE_ADDR, (uint16_t)((addr << 1) | (!wlen ? 1u : 0u)));
++	wr16(b, I2C_INTR_STAT, INT_ALL);
++	wr16(b, I2C_FIFO_ADDR_CLR, 1);
++	wr16(b, I2C_INTR_MASK, INT_HS_NACKERR | INT_ACKERR | INT_COMP | INT_ARB_LOST);
++	if (wrrd) {
++		wr16(b, I2C_TRANSFER_LEN, (uint16_t)wlen);
++		wr16(b, I2C_TRANSFER_AUX, (uint16_t)rlen);
++		wr16(b, I2C_TRANSAC_LEN, 2);
++	} else {
++		wr16(b, I2C_TRANSFER_LEN, (uint16_t)(wlen ? wlen : rlen));
++		wr16(b, I2C_TRANSAC_LEN, 1);
++	}
++	for (unsigned i = 0; i < wlen; i++) {
++		wr16(b, I2C_DATA_PORT, wr[i]);
++	}
++	wr16(b, I2C_START, 1);
++	uint16_t st = 0;
++	for (unsigned t = 0; t < 20000; t++) {       /* ~20 ms; a 100 kHz byte is ~90 us */
++		st = rd16(b, I2C_INTR_STAT);
++		if (st & (INT_COMP | INT_ACKERR | INT_HS_NACKERR | INT_ARB_LOST)) {
++			break;
++		}
++		delay(1);
++	}
++	wr16(b, I2C_INTR_STAT, INT_ALL);
++	if (!(st & (INT_COMP | INT_ACKERR | INT_HS_NACKERR | INT_ARB_LOST))) {
++		g_ready[bus] = 0;                         /* reinit next time */
++		error = ETIMEDOUT;
++	} else if (st & (INT_ACKERR | INT_HS_NACKERR)) {
++		error = ENXIO;
++	} else if (st & INT_ARB_LOST) {
++		error = EBUSY;
++	} else {
++		for (unsigned i = 0; i < rlen; i++) {
++			rd[i] = (uint8_t)rd16(b, I2C_DATA_PORT);
++		}
++	}
++	wr16(b, I2C_FIFO_ADDR_CLR, 1);
++	if (g_verbose) {
++		printf("A01CORE I2C: bus %u addr %#x w%u r%u -> %d (stat %#x)\n", bus, addr, wlen, rlen,
++		    error, st);
++	}
++	return error;
++}
++
++/* ---- bit-banged bus (open drain emulated with the direction bit) ---- */
++static void
++sw_line(unsigned pin, int high)
++{
++	uint32_t bit = 1u << (pin % 32u);
++	if (high) {
++		wr32(g_gpio, GPIO_DIR(pin), rd32(g_gpio, GPIO_DIR(pin)) & ~bit);      /* input: released */
++	} else {
++		wr32(g_gpio, GPIO_DOUT(pin), rd32(g_gpio, GPIO_DOUT(pin)) & ~bit);
++		wr32(g_gpio, GPIO_DIR(pin), rd32(g_gpio, GPIO_DIR(pin)) | bit);       /* output low */
++	}
++	delay(SW_DELAY_US);
++}
++
++static int
++sw_get(unsigned pin)
++{
++	return (rd32(g_gpio, GPIO_DIN(pin)) >> (pin % 32u)) & 1u;
++}
++
++static int
++sw_init(void)
++{
++	if (!g_gpio) {
++		g_gpio = ml_io_map(GPIO_PA, 0x1000);
++	}
++	if (!g_gpio) {
++		return ENOMEM;
++	}
++	const unsigned pins[2] = { SW_SDA, SW_SCL };
++	for (unsigned i = 0; i < 2; i++) {
++		unsigned p = pins[i];
++		uint32_t m = rd32(g_gpio, GPIO_MODE(p));
++		wr32(g_gpio, GPIO_MODE(p), m & ~(0xfu << GPIO_MODE_SHIFT(p)));   /* GPIO function */
++	}
++	sw_line(SW_SDA, 1);
++	sw_line(SW_SCL, 1);
++	return 0;
++}
++
++static int
++sw_write_byte(uint8_t v)
++{
++	for (int i = 7; i >= 0; i--) {
++		sw_line(SW_SDA, (v >> i) & 1);
++		sw_line(SW_SCL, 1);
++		sw_line(SW_SCL, 0);
++	}
++	sw_line(SW_SDA, 1);
++	sw_line(SW_SCL, 1);
++	int nack = sw_get(SW_SDA);
++	sw_line(SW_SCL, 0);
++	return nack ? ENXIO : 0;
++}
++
++static uint8_t
++sw_read_byte(int ack)
++{
++	uint8_t v = 0;
++	sw_line(SW_SDA, 1);
++	for (int i = 0; i < 8; i++) {
++		sw_line(SW_SCL, 1);
++		v = (uint8_t)((v << 1) | sw_get(SW_SDA));
++		sw_line(SW_SCL, 0);
++	}
++	sw_line(SW_SDA, ack ? 0 : 1);
++	sw_line(SW_SCL, 1);
++	sw_line(SW_SCL, 0);
++	sw_line(SW_SDA, 1);
++	return v;
++}
++
++static void
++sw_start(void)
++{
++	sw_line(SW_SDA, 1);
++	sw_line(SW_SCL, 1);
++	sw_line(SW_SDA, 0);
++	sw_line(SW_SCL, 0);
++}
++
++static void
++sw_stop(void)
++{
++	sw_line(SW_SDA, 0);
++	sw_line(SW_SCL, 1);
++	sw_line(SW_SDA, 1);
++}
++
++static int
++sw_xfer(uint8_t addr, const uint8_t *wr, unsigned wlen, uint8_t *rd, unsigned rlen)
++{
++	int error = sw_init();
++	if (error) {
++		return error;
++	}
++	if (wlen) {
++		sw_start();
++		error = sw_write_byte((uint8_t)(addr << 1));
++		for (unsigned i = 0; !error && i < wlen; i++) {
++			error = sw_write_byte(wr[i]);
++		}
++	}
++	if (!error && rlen) {
++		sw_start();                               /* (repeated) start */
++		error = sw_write_byte((uint8_t)((addr << 1) | 1u));
++		for (unsigned i = 0; !error && i < rlen; i++) {
++			rd[i] = sw_read_byte(i + 1 < rlen);
++		}
++	}
++	sw_stop();
++	if (g_verbose) {
++		printf("A01CORE I2C: gpio bus addr %#x w%u r%u -> %d\n", addr, wlen, rlen, error);
++	}
++	return error;
++}
++
++int
++a01core_i2c_xfer(unsigned bus, uint8_t addr, const uint8_t *wr, unsigned wlen, uint8_t *rd, unsigned rlen)
++{
++	if (g_disabled || (bus >= 6 && bus != SW_BUS)) {
++		return ENODEV;
++	}
++	lck_mtx_lock(&a01_i2c_lock);
++	int error = bus == SW_BUS ? sw_xfer(addr, wr, wlen, rd, rlen) : hw_xfer(bus, addr, wr, wlen, rd, rlen);
++	lck_mtx_unlock(&a01_i2c_lock);
++	return error;
++}
++
++/* ---- S2MU005 fuel gauge ---- */
++#define FG_BUS     1u
++#define FG_ADDR    0x3bu
++#define FG_RVBAT   0x04u
++#define FG_RCUR_CC 0x06u
++#define FG_RSOC    0x08u
++
++static int
++fg_read16(uint8_t reg, uint16_t *val)
++{
++	/* the stock driver reads byte by byte and repeats until two reads agree */
++	uint8_t lo, hi, lo2, hi2;
++	for (unsigned tries = 0; tries < 10; tries++) {
++		uint8_t r0 = reg, r1 = (uint8_t)(reg + 1u);
++		if (a01core_i2c_xfer(FG_BUS, FG_ADDR, &r0, 1, &lo, 1) ||
++		    a01core_i2c_xfer(FG_BUS, FG_ADDR, &r1, 1, &hi, 1) ||
++		    a01core_i2c_xfer(FG_BUS, FG_ADDR, &r0, 1, &lo2, 1) ||
++		    a01core_i2c_xfer(FG_BUS, FG_ADDR, &r1, 1, &hi2, 1)) {
++			return EIO;
++		}
++		if (lo == lo2 && hi == hi2) {
++			*val = (uint16_t)(lo | (hi << 8));
++			return 0;
++		}
++	}
++	return EAGAIN;
++}
++
++int
++a01core_fg_read(unsigned *soc_x100, unsigned *mv, int *ma)
++{
++	uint16_t v, s, c;
++	if (fg_read16(FG_RVBAT, &v) || fg_read16(FG_RSOC, &s) || fg_read16(FG_RCUR_CC, &c)) {
++		return EIO;
++	}
++	*mv = ((uint32_t)v * 1000u) >> 13;
++	int soc = (s & 0x8000u) ? 0 : (int)(((uint32_t)(s & 0x7fffu) * 10000u) >> 14);
++	*soc_x100 = (unsigned)MIN(soc, 10000);
++	/* stock sign: bit 15 set = charging (positive here, IOPMPowerSource convention) */
++	if (c & 0x8000u) {
++		*ma = (int)(((uint32_t)((~c) & 0xffffu) + 1u) * 1000u >> 12);
++	} else {
++		*ma = -(int)(((uint32_t)(c & 0x7fffu) * 1000u) >> 12);
++	}
++	return 0;
++}
++
++static void
++id_check(const char *what, unsigned bus, uint8_t addr, uint8_t reg, unsigned len, uint16_t want)
++{
++	uint8_t buf[2] = { 0, 0 };
++	int error = a01core_i2c_xfer(bus, addr, &reg, 1, buf, len);
++	uint16_t got = len == 2 ? (uint16_t)((buf[0] << 8) | buf[1]) : buf[0];
++	printf("A01CORE I2C: %s (bus %u addr %#x reg %#x): %s %#x%s\n", what, bus, addr, reg,
++	    error ? "error" : "id", error ? (unsigned)error : got,
++	    error ? "" : (got == want ? " OK" : " UNEXPECTED"));
++}
++
++void
++a01core_i2c_probe(void)
++{
++	int mode = 1;
++	(void)PE_parse_boot_argn("a01i2c", &mode, sizeof(mode));
++	if (mode <= 0) {
++		g_disabled = 1;
++		printf("A01CORE I2C: disabled (a01i2c=0)\n");
++		return;
++	}
++	g_verbose = mode >= 2;
++	unsigned soc, mv;
++	int ma;
++	if (a01core_fg_read(&soc, &mv, &ma) == 0) {
++		printf("A01CORE I2C: S2MU005 fuel gauge: %u.%02u %%, %u mV, %d mA\n", soc / 100, soc % 100, mv, ma);
++	} else {
++		printf("A01CORE I2C: S2MU005 fuel gauge (bus 1 addr 0x3b) not answering\n");
++	}
++	id_check("AW8896 speaker amp", 4, 0x34, 0x00, 2, 0x0310);
++	id_check("LIS2DS accelerometer", SW_BUS, 0x1d, 0x0f, 1, 0x43);
++}
++#endif /* ARM64_BOARD_CONFIG_A01CORE */
+diff --git a/iokit/Kernel/arm/SweetBattery.cpp b/iokit/Kernel/arm/SweetBattery.cpp
+index 866e645..09067a0 100644
+--- a/iokit/Kernel/arm/SweetBattery.cpp
++++ b/iokit/Kernel/arm/SweetBattery.cpp
+@@ -22,6 +22,8 @@ extern "C" int herolte_fg_read(unsigned *percent, unsigned *mv, int *ma,
+ /* bsd/dev/a01core_power.c: MT6357 BATSNS voltage + charger detect over pwrap. */
+ extern "C" int a01core_power_init(void);
+ extern "C" int a01core_batt_read(unsigned *mv, int *charger);
++/* bsd/dev/a01core_i2c.c: S2MU005 fuel gauge on i2c1 (0.01 %, mV, mA; + = charging). */
++extern "C" int a01core_fg_read(unsigned *soc_x100, unsigned *mv, int *ma);
+ #define BATTERY_DESIGN_MAH 3000u        /* SM-A013 EB-BA013ABY, 3000 mAh */
+ #else
+ /* bsd/dev/sweet_spmi.c */
+@@ -252,11 +254,19 @@ SweetBattery::poll(void)
+ void
+ SweetBattery::poll(void)
+ {
+-	/* Voltage-derived estimate (no S2MU005 fuel gauge yet): unloaded OCV curve,
+-	 * reads high while charging. No current measurement. */
+-	unsigned mv = 0;
+-	int charger = 0;
+-	if (!fReal || a01core_batt_read(&mv, &charger) != 0 || mv < 2500 || mv > 4600) {
++	/* S2MU005 fuel gauge first (real SOC and current); otherwise the MT6357 BATSNS
++	 * voltage with an unloaded OCV curve. Charger presence comes from the PMIC. */
++	unsigned mv = 0, fg_mv = 0, soc = 0;
++	int charger = 0, ma = 0;
++	bool pmic = fReal && a01core_batt_read(&mv, &charger) == 0 && mv >= 2500 && mv <= 4600;
++	if (fReal && a01core_fg_read(&soc, &fg_mv, &ma) == 0 && fg_mv >= 2500 && fg_mv <= 4600) {
++		bool external = pmic && charger != 0;
++		unsigned percent = (soc + 50u) / 100u;
++		publish(percent, fg_mv, ma, external, external, external && ma > 20,
++		    external && percent >= 100, true, true);
++		return;
++	}
++	if (!pmic) {
+ 		publish(100, 0, 0, true, true, false, false, false, false);
+ 		return;
+ 	}
+diff --git a/iokit/bsddev/IOKitBSDInit.cpp b/iokit/bsddev/IOKitBSDInit.cpp
+index 1480619..feb3076 100644
+--- a/iokit/bsddev/IOKitBSDInit.cpp
++++ b/iokit/bsddev/IOKitBSDInit.cpp
+@@ -780,7 +780,9 @@ IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
+ 	extern void a01core_keys_init(void);
+ 	extern void a01core_touch_probe(void);
+ 	extern void a01core_power_probe(void);
++	extern void a01core_i2c_probe(void);
+ 	a01core_power_probe();
++	a01core_i2c_probe();
+ 	a01core_keys_init();
+ 	a01core_touch_probe();
+ 	}
+-- 
+2.55.0.windows.5
+
