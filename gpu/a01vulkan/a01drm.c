@@ -20,6 +20,17 @@
 #include <IOKit/IOKitLib.h>
 #include "xf86drm.h"
 
+/* The iOS SDK has no IOKit headers; gpu/hakios-gl/include/IOKit/IOKitLib.h is a subset.
+ * These match IOKit.framework's public IOKitLib.h. */
+#ifndef IO_OBJECT_NULL
+#define IO_OBJECT_NULL ((io_object_t)0)
+#endif
+typedef io_object_t io_connect_t;
+extern const mach_port_t kIOMasterPortDefault;
+kern_return_t IOServiceOpen(io_service_t service, task_port_t owningTask, uint32_t type, io_connect_t *connect);
+kern_return_t IOConnectCallScalarMethod(mach_port_t connection, uint32_t selector, const uint64_t *input,
+    uint32_t inputCnt, uint64_t *output, uint32_t *outputCnt);
+
 #define A01_NODE "/dev/null"
 /* pvr_srv_bridge.h: DRM_IOWR(DRM_COMMAND_BASE + DRM_SRVKM_CMD, struct drm_srvkm_cmd) */
 struct a01_srvkm_cmd {
