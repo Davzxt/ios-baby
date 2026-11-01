@@ -7,4 +7,7 @@
 #define MTKPP_LOGTIME(...)   do { } while (0)
 #define MTK_DEBUG_VERSION_STR "a01core"
 extern int g_use_id;
+#define MTKPP_TriggerAEE(x) do { } while (0)
+#define pr_warn(...) printf(__VA_ARGS__)
+int printf(const char *, ...);
 #endif
