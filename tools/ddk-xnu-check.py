@@ -64,7 +64,7 @@ def main():
     incs += [f"generated/{b}_bridge" for b in BRIDGES]
     flags = ["--target=arm64-apple-ios16.0", "-ffreestanding", "-nostdinc", "-fno-builtin", "-std=gnu99",
              "-isystem", res + "/include", "-include", "config_kernel_a01core.h",
-             "-DPVRSRV_A01_XNU", "-D__KERNEL__", "-Wno-everything"] + [f"-I{ROOT / i}" for i in incs]
+             "-DPVRSRV_A01_XNU", "-D__KERNEL__", "-Wno-everything", "-Werror=implicit-function-declaration"] + [f"-I{ROOT / i}" for i in incs]
 
     errors, objs = {}, []
     for s in srcs:
