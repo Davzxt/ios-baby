@@ -33,6 +33,22 @@ Cflags: -I$WORK/libdrm -I$WORK/libdrm/include/drm
 Libs: -L$WORK/drm-standin -ldrm
 PC
 
+# Mesa 26 precompiles internal shaders with mesa_clc (OpenCL C, needs LLVM). Cross builds use host
+# copies of mesa_clc and the driver's precomp compiler, built here for the macOS runner.
+if [ ! -x host-tools/bin/mesa_clc ]; then
+  LLVM=$(brew --prefix llvm)
+  mkdir -p host-pc && cp pc/libdrm.pc host-pc/
+  xcrun clang -O2 -dynamiclib -install_name "$WORK/host-drm/libdrm.2.dylib" -I libdrm -I libdrm/include/drm     -I mesa/include -o host-drm-lib.dylib "$MESA/herodrm.c" -framework IOKit -framework CoreFoundation
+  mkdir -p host-drm && mv host-drm-lib.dylib host-drm/libdrm.2.dylib && ln -sf libdrm.2.dylib host-drm/libdrm.dylib
+  sed -i '' "s#-L$WORK/drm-standin#-L$WORK/host-drm#" host-pc/libdrm.pc
+  (cd mesa && PATH="$LLVM/bin:$PATH" PKG_CONFIG_PATH="$WORK/host-pc:$(brew --prefix)/lib/pkgconfig:$LLVM/lib/pkgconfig"     meson setup ../host-build --native-file /dev/null -Dprefix="$WORK/host-tools" --buildtype=release     -Dc_args="-I$WORK/libdrm -I$WORK/libdrm/include/drm"     -Dvulkan-drivers=imagination -Dgallium-drivers= -Dllvm=enabled -Dmesa-clc=enabled     -Dinstall-mesa-clc=true -Dprecomp-compiler=enabled -Dinstall-precomp-compiler=true     -Dplatforms= -Dglx=disabled -Degl=disabled -Dgbm=disabled -Dopengl=false -Dgles1=disabled     -Dgles2=disabled -Dbuild-tests=false -Dtools= -Dvulkan-layers= -Dxmlconfig=disabled -Dzstd=disabled)
+  ninja -C host-build -k 0 || true
+  mkdir -p host-tools/bin
+  find host-build -type f -perm -u+x \( -name 'mesa_clc' -o -name 'vtn_bindgen*' -o -name '*_clc' -o -name '*precomp*' \)     -exec cp {} host-tools/bin/ \;
+  ls -la host-tools/bin
+fi
+export PATH="$WORK/host-tools/bin:$PATH"
+
 cat > ios-cross.txt <<X
 [binaries]
 c = ['xcrun', '--sdk', 'iphoneos', 'clang', '-arch', 'arm64']
@@ -61,7 +77,7 @@ X
 cd mesa
 [ -d build ] || meson setup build --cross-file ../ios-cross.txt --buildtype=release -Dprefix=/ \
   -Dvulkan-drivers=imagination -Dimagination-srv=true -Dgallium-drivers= \
-  -Dllvm=disabled -Dglx=disabled -Degl=disabled -Dgbm=disabled -Dplatforms= -Dopengl=false \
+  -Dllvm=disabled -Dmesa-clc=system -Dprecomp-compiler=system -Dglx=disabled -Degl=disabled -Dgbm=disabled -Dplatforms= -Dopengl=false \
   -Dgles1=disabled -Dgles2=disabled -Dshader-cache=disabled -Dvalgrind=disabled \
   -Dlibunwind=disabled -Dzstd=disabled -Dxmlconfig=disabled -Dbuild-tests=false \
   -Dglvnd=disabled -Dlmsensors=disabled -Dtools= -Dperfetto=false -Dvulkan-layers=

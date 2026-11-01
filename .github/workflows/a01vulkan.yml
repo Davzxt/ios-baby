@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Deps
         run: |
-          brew install meson ninja bison pkg-config || true
+          brew install meson ninja bison pkg-config llvm spirv-llvm-translator spirv-tools libclc || true
           python3 -m venv "$RUNNER_TEMP/venv"
           "$RUNNER_TEMP/venv/bin/pip" install -q mako pyyaml packaging setuptools meson
           echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
