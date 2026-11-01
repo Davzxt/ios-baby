@@ -61,7 +61,7 @@ typedef atomic_t ATOMIC_T;
 #include "img_types.h" /* needed for IMG_INT */
 typedef struct _OS_LOCK_ *POS_LOCK;
 
-#if defined(LINUX) || defined(__QNXNTO__) || defined(INTEGRITY_OS)
+#if defined(LINUX) || defined(__QNXNTO__) || defined(INTEGRITY_OS) || defined(PVRSRV_A01_XNU)
 typedef struct _OSWR_LOCK_ *POSWR_LOCK;
 #else /* defined(LINUX) || defined(__QNXNTO__) || defined(INTEGRITY_OS) */
 typedef struct _OSWR_LOCK_ {

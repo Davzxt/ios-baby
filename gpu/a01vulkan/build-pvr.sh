@@ -31,8 +31,7 @@ cp -R "$HERE/compat/." mesa/include/   # sys/sysmacros.h, linux/const.h, linux/t
 # pvr "srv" winsys, which talks to the GE8100 driver directly, not through DRM).
 mkdir -p drm-standin pc
 # iOS libdrm: link stand-in only; the srv winsys will talk to the XNU GE8100 user client
-echo "void a01_drm_stub(void) {}" > drm-stub.c
-$CC_IOS -O2 -dynamiclib -install_name @rpath/libdrm.2.dylib -o drm-standin/libdrm.2.dylib drm-stub.c
+$CC_IOS -O2 -dynamiclib -install_name @rpath/libdrm.2.dylib -o drm-standin/libdrm.2.dylib "$HERE/a01drm.c"
 ln -sf libdrm.2.dylib drm-standin/libdrm.dylib
 cat > pc/libdrm.pc <<PC
 Name: libdrm
@@ -97,5 +96,6 @@ cd ..
 lib=$(ls mesa/build/src/imagination/vulkan/libvulkan_powervr_mesa*.dylib | head -1)
 cp "$lib" "$OUT/libvulkan_powervr.dylib"
 install_name_tool -id /usr/lib/libvulkan_powervr.dylib "$OUT/libvulkan_powervr.dylib"
+cp drm-standin/libdrm.2.dylib "$OUT/" && codesign -s - -f "$OUT/libdrm.2.dylib"
 codesign -s - -f "$OUT/libvulkan_powervr.dylib"
 otool -L "$OUT/libvulkan_powervr.dylib"

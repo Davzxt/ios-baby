@@ -121,7 +121,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */ /**************************************************************************/
 IMG_INTERNAL
 PVRSRV_ERROR OSLockCreate(POS_LOCK *phLock);
-#if defined(INTEGRITY_OS)
+#if defined(INTEGRITY_OS) || defined(PVRSRV_A01_XNU)
 #define OSLockCreateNoStats OSLockCreate
 #endif
 
@@ -134,7 +134,7 @@ PVRSRV_ERROR OSLockCreate(POS_LOCK *phLock);
 IMG_INTERNAL
 PVRSRV_ERROR OSLockDestroy(POS_LOCK hLock);
 
-#if defined(INTEGRITY_OS)
+#if defined(INTEGRITY_OS) || defined(PVRSRV_A01_XNU)
 #define OSLockDestroyNoStats OSLockDestroy
 #endif
 /**************************************************************************/ /*!
