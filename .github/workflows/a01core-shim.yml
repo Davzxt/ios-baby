@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       a01core_fb_pa:
-        description: Address the A01CORE kernel draws at (empty = 0xbe840000, the kernel's default). Use the same value in the xnu workflow.
+        description: Address the A01CORE kernel draws at (empty = 0x76740000, the kernel default). Use the same value in the xnu workflow.
         default: ""
       a01core_fb_stride:
         description: Row bytes the kernel uses (empty = 2944). Same value as in the xnu workflow.

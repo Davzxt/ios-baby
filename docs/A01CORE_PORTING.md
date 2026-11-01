@@ -76,7 +76,7 @@ originais, ou o firmware completo. Para sair da sonda, segure **Power + Volume �
 
 1. Rode o workflow **xnu** com `machine_config = A01CORE`. Em `a01core_fb_pa` e
    `a01core_fb_stride`, pode deixar vazio: o shim **move a imagem da tela** para o endereço
-   que o kernel usa (padrão `0xbe840000`, stride 2944) e reprograma o `DISP_OVL0`. Só use
+   que o kernel usa (padrão `0x76740000`, stride 2944, medido no aparelho) e reprograma o `DISP_OVL0`. Só use
    os valores da foto se o shim mostrar `FB TARGET NOT USABLE`; nesse caso, passe os mesmos
    valores também no workflow **a01core-shim**.
 2. Desde 01/11/2026 o kernel `A01CORE` compila sem erros no GitHub Actions (macos-14 e
@@ -88,7 +88,7 @@ originais, ou o firmware completo. Para sair da sonda, segure **Power + Volume �
 ## 3. Marco 3: o XNU inicia e acha o eMMC
 
 ```
-python tools/mkadt_a01core.py a01core.adt --ram-base 0x60000000 --ram-mb 1024 --fb-pa 0x<USE FB> --fb-stride <STRIDE>
+python tools/mkadt_a01core.py a01core.adt --ram-base 0x80000000 --ram-mb 511 --fb-pa 0x<USE FB> --fb-stride <STRIDE>
 curl -L -o td4150_a01core.img https://raw.githubusercontent.com/almondnguyen/android_kernel_samsung_a01core/master/firmware/tsp_synaptics/td4150_a01core.img
 python tools/mkpayload.py kernel.development.a01core a01core.adt payload.bin --blob TouchFirmware=td4150_a01core.img --cmdline "debug=0xc serial=3 cpus=1 keepsyms=1 -enable_kprintf_spam -noprogress rd=emmcroot0 emmcroot=userdata emmcprobe=1 wdt=-1 -wdt_no_pmu wdt_test=no_user_checkin"
 python tools/a01core-pack-boot.py pack boot.img a01core.Image xnu-boot.img --append payload.bin
@@ -161,7 +161,7 @@ O que o driver faz, sem interrupção (só leitura do GPIO0 em loop):
    (`CMD_ROMBOOT_DOWNLOAD`) e manda o chip rodá-lo;
 3. envia a configuração de toque e a de tela quando o chip pede (`CMD_DOWNLOAD_CONFIG`);
 4. lê `max x/y`, define o formato dos relatórios e repassa os toques ao iOS em pixels do
-   painel (720×1520), com até 10 dedos.
+   painel (720×1480), com até 10 dedos.
 
 No log do kernel, o caminho bom é: `firmware: app 102400 ...` → `identify: ... mode 0x4` →
 `host download done` → `config type 1` → `config type 2` → `application: ... max x ...` →

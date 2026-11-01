@@ -1,0 +1,84 @@
+From c71afc9355f56083b68241491e271eb57c2e6595 Mon Sep 17 00:00:00 2001
+From: a01core <a01core@localhost>
+Date: Sun, 1 Nov 2026 11:52:30 -0300
+Subject: [PATCH] 0306 a01core: measured panel 720x1480, LK framebuffer at
+ 0x76740000
+
+---
+ bsd/dev/a01core_touch.c           | 4 ++--
+ iokit/Kernel/arm/hid/SweetHID.cpp | 4 ++--
+ pexpert/pexpert/arm64/A5XELTE.h   | 6 +++---
+ 3 files changed, 7 insertions(+), 7 deletions(-)
+
+diff --git a/bsd/dev/a01core_touch.c b/bsd/dev/a01core_touch.c
+index c8a825b..e3dad4c 100644
+--- a/bsd/dev/a01core_touch.c
++++ b/bsd/dev/a01core_touch.c
+@@ -20,7 +20,7 @@
+  *   4. Application running: CMD_GET_APPLICATION_INFO (0x20) for max x/y, then
+  *      CMD_SET_TOUCH_REPORT_CONFIG (0x26) with a fixed byte-aligned layout:
+  *      for each active object { index 8, classification 8, x 16, y 16 }.
+- *   5. Touch reports (0x11) go to sweet_hid_touch() in panel pixels (720x1520).
++ *   5. Touch reports (0x11) go to sweet_hid_touch() in panel pixels (720x1480).
+  *   If the chip resets (identify in ROM boot mode again) the driver starts over.
+  *
+  * Wire format (TCM over SPI, mode 0, 5 MHz): a command is [cmd, len lo, len hi,
+@@ -144,7 +144,7 @@ static const uint8_t spi_pins[4] = { 31, 32, 33, 34 };
+ #define MAX_FINGERS               10u
+ 
+ #define PANEL_W              720
+-#define PANEL_H              1520
++#define PANEL_H              1480
+ 
+ #define IMG_MAGIC            0x4818472bu
+ #define AREA_MAGIC           0x7c05e516u
+diff --git a/iokit/Kernel/arm/hid/SweetHID.cpp b/iokit/Kernel/arm/hid/SweetHID.cpp
+index 9a85368..0ccde2e 100644
+--- a/iokit/Kernel/arm/hid/SweetHID.cpp
++++ b/iokit/Kernel/arm/hid/SweetHID.cpp
+@@ -457,10 +457,10 @@ SweetHIDTouch::start(IOService *provider)
+ 		}
+ 	}
+ #elif defined(ARM64_BOARD_CONFIG_A01CORE)
+-	/* 720x1520 panel; AppleCLCD scales the iOS canvas onto the whole panel,
++	/* 720x1480 panel; AppleCLCD scales the iOS canvas onto the whole panel,
+ 	 * so touches normalize over the panel itself. */
+ 	fPanelW = fLogicalW = 720;
+-	fPanelH = fLogicalH = 1520;
++	fPanelH = fLogicalH = 1480;
+ #elif defined(ARM64_BOARD_CONFIG_A5XELTE)
+ 	fPanelW = fLogicalW = 1080;
+ 	fPanelH = fLogicalH = 1920;
+diff --git a/pexpert/pexpert/arm64/A5XELTE.h b/pexpert/pexpert/arm64/A5XELTE.h
+index 7ddef69..3c6186d 100644
+--- a/pexpert/pexpert/arm64/A5XELTE.h
++++ b/pexpert/pexpert/arm64/A5XELTE.h
+@@ -43,14 +43,14 @@
+  * and the build passes it with A01CORE_DEFINES=-DA01CORE_FB_PA=0x...
+  */
+ #ifndef A01CORE_FB_PA
+-#define A01CORE_FB_PA                 0xbe840000
++#define A01CORE_FB_PA                 0x76740000  /* measured: OVL0 L0, 2026-11-01 */
+ #endif
+ #ifndef A01CORE_FB_STRIDE
+ #define A01CORE_FB_STRIDE             2944  /* ALIGN(720, 32) * 4 */
+ #endif
+ #define A5XELTE_FB_PA                 A01CORE_FB_PA
+ #define A5XELTE_FB_WIDTH              720
+-#define A5XELTE_FB_HEIGHT             1520
++#define A5XELTE_FB_HEIGHT             1480  /* measured: OVL0 720x1480 */
+ #define A5XELTE_FB_STRIDE             A01CORE_FB_STRIDE
+ #define A5XELTE_FB_BLOCKS             4     /* 2 MiB VA=PA bootstrap blocks */
+ #define A5XELTE_FB_TEXT_SCALE         1
+@@ -59,7 +59,7 @@
+  * past its header, so /proc/last_kmsg of the next Samsung kernel keeps it. */
+ #define A5XELTE_MARKER_PA             0x4b100100
+ #define A5XELTE_BOOT_MPIDR            0x0
+-/* iOS draws this logical canvas; present() scales it to the 720x1520
++/* iOS draws this logical canvas; present() scales it to the 720x1480
+  * panel (nearest). 828x1792 @2x is the iPhone XR screen, 2.5 % taller
+  * than the panel's aspect. Override with sweetfb_lw/sweetfb_lh. */
+ #define A01CORE_LOGICAL_W             828
+-- 
+2.55.0.windows.5
+

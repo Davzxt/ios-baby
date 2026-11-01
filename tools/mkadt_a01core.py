@@ -10,8 +10,8 @@ shim/a01core probe screen and be passed here AND to the kernel build
 (xnu workflow inputs a01core_fb_pa / a01core_fb_stride).
 
 Example (defaults shown):
-  python3 tools/mkadt_a01core.py a01core.adt --ram-base 0x60000000 --ram-mb 1024 \\
-      --fb-pa 0xbe840000 --fb-stride 2944
+  python3 tools/mkadt_a01core.py a01core.adt --ram-base 0x80000000 --ram-mb 511 \\
+      --fb-pa 0x76740000 --fb-stride 2944
 """
 import argparse
 import os
@@ -20,8 +20,8 @@ from pathlib import Path
 import adt
 import mkadt
 
-RAM_BASE = 0x60000000        # XNU window; the shim refuses it if it hits a reserved range
-RAM_MB = 1024
+RAM_BASE = 0x80000000        # free 511 MiB window on the 2 GB A01 Core (probe 2026-11-01)
+RAM_MB = 511
 SOC_BASE = 0x0c000000        # arm-io ranges base (GIC); child regs are relative
 SOC_SIZE = 0x34000000        # up to the DRAM at 0x40000000
 GICD, GICD_SIZE = 0x0c000000, 0x40000
@@ -30,7 +30,7 @@ TIMEBASE = 13000000          # DTB timer clock-frequency = 0xc65d40
 CPU_HZ = 1500000000
 NCPUS = 4                    # MPIDR Aff0 0..3, PSCI 0.2 via smc
 MSDC0 = (0x11230000, 0x10000)
-FB_W, FB_H = 720, 1520
+FB_W, FB_H = 720, 1480
 
 
 def set_prop(node, name, value):
@@ -156,7 +156,7 @@ def main():
     parser.add_argument('output', type=Path)
     parser.add_argument('--ram-base', type=lambda v: int(v, 0), default=RAM_BASE)
     parser.add_argument('--ram-mb', type=int, default=RAM_MB)
-    parser.add_argument('--fb-pa', type=lambda v: int(v, 0), default=0xbe840000,
+    parser.add_argument('--fb-pa', type=lambda v: int(v, 0), default=0x76740000,
                         help='framebuffer address from the probe screen')
     parser.add_argument('--fb-stride', type=int, default=2944,
                         help='framebuffer row bytes from the probe screen')

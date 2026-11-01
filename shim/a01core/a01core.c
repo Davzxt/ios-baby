@@ -40,7 +40,7 @@
 #define OVL_ADDR(n)     (0xf40U + 0x20U * (n))
 
 #define FB_W            720U
-#define FB_H            1520U
+#define FB_H            1480U   /* measured: OVL0 720x1480 */
 #define TEXT_SCALE      2U
 #define CELL_W          (8U * TEXT_SCALE)
 #define CELL_H          (16U * TEXT_SCALE)
@@ -48,14 +48,14 @@
 #define ROWS            (FB_H / CELL_H)
 
 /* Defaults that the kernel build and mkadt_a01core.py also use. */
-#define DEFAULT_RAM_BASE   0x60000000UL
-#define DEFAULT_RAM_SIZE   0x40000000UL
+#define DEFAULT_RAM_BASE   0x80000000UL   /* free on the 2 GB A01 Core (probe 2026-11-01) */
+#define DEFAULT_RAM_SIZE   0x1ff00000UL
 #define SURFACE_PA         0xa0000000UL   /* A01CORE_SCALED_SURFACE_PA */
 #define SURFACE_SIZE       0x01000000UL   /* 828x1792x4 rounded up */
 /* Where the A01CORE kernel was compiled to draw (pexpert A5XELTE.h A01CORE_FB_PA /
  * A01CORE_FB_STRIDE). Build both with the same values; these are the defaults. */
 #ifndef A01CORE_FB_PA
-#define A01CORE_FB_PA      0xbe840000UL
+#define A01CORE_FB_PA      0x76740000UL
 #endif
 #ifndef A01CORE_FB_STRIDE
 #define A01CORE_FB_STRIDE  2944U

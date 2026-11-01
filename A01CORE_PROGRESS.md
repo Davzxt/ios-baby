@@ -66,3 +66,7 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
   SMC `0x82000115` (r1 entrada, r2 dtb, r3 0, r4 1). Kernels de 32 bits passam pela mesma SMC
   com r4 = 0. Logo, `--raw` e `--kernel-addr 0x40008000` nunca podiam funcionar.
 - Shim: acha a tela so pelo DISP_OVL0 se o FDT falhar; sem tela, reinicia na hora (sinal).
+- **Sonda V2 rodou no aparelho (foto do usuario):** EL2, FDT ok, DRAM 0x40000000+2 GiB,
+  painel **720x1480**, LK desenha em **0x76740000** (L0, pitch 2944; L3 0x76b79000 pitch 2880),
+  23 reservas. A janela antiga do XNU (0x60000000+1G) bate em 0x76000000: nova janela
+  0x80000000+511 MiB. Patch `0306` e shim/ADT com os valores medidos.

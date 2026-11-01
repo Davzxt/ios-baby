@@ -28,7 +28,7 @@ tela, sonda do toque e ferramentas de Odin.
 | Sonda de hardware (tela, RAM, reservas, watchdog) | Escrita. É o marco 1 |
 | XNU para MT6739 (máquina `A01CORE`) | Patch `0300`: GICv3, timer de 13 MHz/INTID 27, 4 núcleos via PSCI, páginas de 4 KB, Cortex-A53. **Compila no GitHub Actions** (01/11/2026), 0 instruções LSE |
 | eMMC (MSDC0) leitura/escrita, raiz HFS+ no `userdata` | Patch `0301` (PIO, usa o estado em que o LK deixa o controlador) |
-| Tela | Framebuffer do LK, canvas de iPhone XR escalado por CPU para 720×1520 (patch `0300`). O shim move a imagem para o endereço compilado no kernel, sem precisar recompilar |
+| Tela | Framebuffer do LK, canvas de iPhone XR escalado por CPU para 720×1480 (patch `0300`). O shim move a imagem para o endereço compilado no kernel, sem precisar recompilar |
 | Botões Power, Volume +/− | Patch `0302` (keypad + PMIC MT6357; Volume − pode virar Home) |
 | Toque TD4150 (Synaptics, SPI) | Driver completo (patch `0304`): envio do firmware "zero flash", configurações, até 10 dedos. Precisa do `td4150_a01core.img` no payload |
 | Toque NT36525B (variante Novatek) | Não suportado |
