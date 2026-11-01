@@ -97,3 +97,9 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 - GPU: BVNC do GE8100 = **22.49.21.16** (`rgx_bvnc_table_km.h` do DDK 1.11 da Samsung; config
   22.V.21.16: 1 cluster, firmware MIPS). Mesa pvr nao tem esse BVNC; o fork JimVulkan/img-pvr roda
   o Vulkan aberto sobre o DDK 1.11 de kernel num GE8320 (22.87.104.18).
+- **1 GiB, 2a tentativa:** a 1a parou em "RAM WINDOW NOT FREE" (reserva dentro da janela que nao e
+  dummy-read). Agora o shim lista as reservas dentro da janela em /chosen a01core-ram-holes e o
+  kernel (0310, 0312) nunca entrega essas paginas a VM. Compilado (run 41340185453), nao testado.
+- **GPU passo 1 (0311):** liga MFG/MFG_CORE0 (sequencia do clk-mt6739-pg.c), libera a protecao de
+  barramento e le RGX_CR_CORE_ID__PBVNC; espera 22.49.21.16. So com a01gpu=1. Nao testado.
+- CI: ccache no workflow xnu (MakeInc.def CCACHE); 1o build com cache parcial: 14 min.
