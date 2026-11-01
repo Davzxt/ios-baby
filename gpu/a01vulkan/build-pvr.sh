@@ -28,8 +28,9 @@ cp -R "$HERE/compat/." mesa/include/   # sys/sysmacros.h, linux/const.h, linux/t
 # libdrm: only headers and link symbols are needed here (the A01 kernel interface is the
 # pvr "srv" winsys, which talks to the GE8100 driver directly, not through DRM).
 mkdir -p drm-standin pc
-$CC_IOS -O2 -dynamiclib -install_name @rpath/libdrm.2.dylib -I libdrm -I libdrm/include/drm \
-  -I mesa/include -o drm-standin/libdrm.2.dylib "$MESA/herodrm.c" -framework IOKit -framework CoreFoundation
+# iOS libdrm: link stand-in only; the srv winsys will talk to the XNU GE8100 user client
+echo "void a01_drm_stub(void) {}" > drm-stub.c
+$CC_IOS -O2 -dynamiclib -install_name @rpath/libdrm.2.dylib -o drm-standin/libdrm.2.dylib drm-stub.c
 ln -sf libdrm.2.dylib drm-standin/libdrm.dylib
 cat > pc/libdrm.pc <<PC
 Name: libdrm
