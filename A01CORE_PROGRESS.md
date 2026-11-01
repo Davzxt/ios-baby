@@ -112,3 +112,5 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 - Same boot: S2MU005 fuel gauge 99.31%, AW8896 amp id 0x310 OK, LIS2DS accelerometer (bus 23 addr 0x1d reg 0xf) read id 0 UNEXPECTED.
 - 0314+0315 on device: "GPU FW: loaded 122880 bytes at 0x834d2000; boot stage 0, mips exc 0x2 irq 0". EXCEPTION_STATUS 0x2 = SI_EXL: the MIPS left reset (ERL clear) and ran code, then took an exception before writing the boot stage. Next: NMI state dump (BOOT_DATA+0x100) to get EPC/cause.
 - Metal research: docs/a01core-metal-research.md.
+- 0316: NMI dump of the MIPS state after a failed boot (prints errEPC/cause/badvaddr, holds 15 s).
+- gpu/a01metal: Metal layer on Vulkan (device, buffers, queue, command buffers, blit; pipelines pending metal2vulkan). Compiles for iOS in CI run 41350545878; not run on the phone (no Vulkan driver yet).
