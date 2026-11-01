@@ -23,10 +23,8 @@ fi
 python3 "$MESA/patch-mesa.py" mesa || echo "patch-mesa.py: some S7 patches did not apply to $MESA_TAG"
 python3 "$HERE/patch-ge8100.py" mesa
 python3 "$HERE/patch-pvr-darwin.py" mesa
-# img-pvr ships only the Android Vulkan headers; Darwin builds also include the beta and Apple ones
-for h in vulkan_beta.h vulkan_metal.h vulkan_macos.h vulkan_ios.h; do
-  [ -f mesa/include/vulkan/$h ] || curl -sfL -o mesa/include/vulkan/$h \n    "https://gitlab.freedesktop.org/mesa/mesa/-/raw/mesa-26.2.3/include/vulkan/$h" || true
-done
+# img-pvr ships only the Android Vulkan headers; Darwin builds also need the beta and Apple ones
+cp -n "$HERE"/vulkan-headers/*.h mesa/include/vulkan/
 cp -R "$HERE/compat/." mesa/include/   # sys/sysmacros.h, linux/const.h, linux/types.h for Darwin
 
 # libdrm: only headers and link symbols are needed here (the A01 kernel interface is the
