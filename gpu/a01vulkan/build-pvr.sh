@@ -38,7 +38,9 @@ PC
 if [ ! -x host-tools/bin/mesa_clc ]; then
   LLVM=$(brew --prefix llvm)
   mkdir -p host-pc && cp pc/libdrm.pc host-pc/
-  xcrun clang -O2 -dynamiclib -install_name "$WORK/host-drm/libdrm.2.dylib" -I libdrm -I libdrm/include/drm     -I mesa/include -o host-drm-lib.dylib "$MESA/herodrm.c" -framework IOKit -framework CoreFoundation
+  # host libdrm: only the host tools are used from this build, the driver itself may not link
+  echo 'void a01_host_drm_stub(void) {}' > host-drm.c
+  xcrun clang -O2 -dynamiclib -install_name "$WORK/host-drm/libdrm.2.dylib" -o host-drm-lib.dylib host-drm.c
   mkdir -p host-drm && mv host-drm-lib.dylib host-drm/libdrm.2.dylib && ln -sf libdrm.2.dylib host-drm/libdrm.dylib
   sed -i '' "s#-L$WORK/drm-standin#-L$WORK/host-drm#" host-pc/libdrm.pc
   (cd mesa && PATH="$LLVM/bin:$PATH" PKG_CONFIG_PATH="$WORK/host-pc:$(brew --prefix)/lib/pkgconfig:$LLVM/lib/pkgconfig"     meson setup ../host-build --native-file /dev/null -Dprefix="$WORK/host-tools" --buildtype=release     -Dc_args="-I$WORK/libdrm -I$WORK/libdrm/include/drm"     -Dvulkan-drivers=imagination -Dgallium-drivers= -Dllvm=enabled -Dmesa-clc=enabled     -Dinstall-mesa-clc=true -Dprecomp-compiler=enabled -Dinstall-precomp-compiler=true     -Dplatforms= -Dglx=disabled -Degl=disabled -Dgbm=disabled -Dopengl=false -Dgles1=disabled     -Dgles2=disabled -Dbuild-tests=false -Dtools= -Dvulkan-layers= -Dxmlconfig=disabled -Dzstd=disabled)
