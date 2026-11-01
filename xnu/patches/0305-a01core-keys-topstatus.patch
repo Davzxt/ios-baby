@@ -1,0 +1,35 @@
+From ee0bda38c5474203d4b78c7ae5aad8e9d717a984 Mon Sep 17 00:00:00 2001
+From: a01core <a01core@localhost>
+Date: Sun, 1 Nov 2026 11:18:12 -0300
+Subject: [PATCH] 0305 a01core keys: MT6357 TOPSTATUS is at 0x24
+
+---
+ bsd/dev/a01core_keys.c | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/bsd/dev/a01core_keys.c b/bsd/dev/a01core_keys.c
+index 87320f1..155e3fa 100644
+--- a/bsd/dev/a01core_keys.c
++++ b/bsd/dev/a01core_keys.c
+@@ -7,7 +7,8 @@
+  *   Power       - MT6357 PMIC PWRKEY  (kpd-sw-pwrkey = KEY_POWER)
+  *   Volume Down - MT6357 PMIC HOMEKEY (kpd-sw-rstkey = KEY_VOLUMEDOWN)
+  * The PMIC is behind the PMIC wrapper (pwrap@1000d000). Its key status is
+- * MT6357_TOPSTATUS (0x28): bit 1 PWRKEY_DEB, bit 3 HOMEKEY_DEB, 0 = pressed
++ * MT6357_TOPSTATUS (0x24, include/linux/mfd/mt6357/registers.h of the SM-A013
++ * kernel; 0x28 is RDSEL_CON): bit 1 PWRKEY_DEB, bit 3 HOMEKEY_DEB, 0 = pressed
+  * (Linux mtk-pmic-keys.c, mt6357 regs).
+  *
+  * Read only: no pinmux, clock or PMIC writes. The pwrap WACS2 offsets
+@@ -48,7 +49,7 @@ extern uint64_t a5xelte_power_pressed_at;
+ #define WACS_INIT_DONE(v)    (((v) >> 21) & 1u)
+ 
+ #define MT6357_HWCID         0x0008u
+-#define MT6357_TOPSTATUS     0x0028u
++#define MT6357_TOPSTATUS     0x0024u
+ #define MT6357_PWRKEY_DEB    (1u << 1)
+ #define MT6357_HOMEKEY_DEB   (1u << 3)
+ 
+-- 
+2.55.0.windows.5
+

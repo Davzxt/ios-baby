@@ -69,7 +69,7 @@ O shim em modo sonda (`shim/a01core`) mostra esses valores na tela.
 | --- | --- |
 | Toque | SPI0 `0x1100a000` (MT6739: `enhance_timing`, `must_tx`, FIFO de 32 bytes, clock `INFRA_CG1` bit 1, conferido em `clk-mt6739.c`); pinos GPIO31 CS, GPIO32 CLK, GPIO33 MISO, GPIO34 MOSI (função 1); interrupção GPIO0 (ativa em nível baixo). TD4150 = `synaptics,tcm-spi` no CS0; NT36525B = `novatek,NVT-ts-spi` no CS1. Os dois são "zero flash": o firmware do toque precisa ser enviado pelo host a cada boot (`tsp_synaptics/td4150_a01core.img`) |
 | Volume + | keypad MTK `0x10010000`, `KP_MEM1` bit 1 (`kpd-hw-init-map[1] = 0x73`), 0 = pressionado |
-| Power / Volume − | PMIC MT6357 PWRKEY / HOMEKEY (`kpd-sw-pwrkey`, `kpd-sw-rstkey`), `TOPSTATUS 0x28` bits 1 e 3, pelo pwrap `0x1000d000` |
+| Power / Volume − | PMIC MT6357 PWRKEY / HOMEKEY (`kpd-sw-pwrkey`, `kpd-sw-rstkey`), `TOPSTATUS 0x24` bits 1 e 3 (conferido em `mt6357/registers.h`), pelo pwrap `0x1000d000` (WACS2 `0xc20`, conferido em `pwrap_hal_v1.c`) |
 
 ## O que não tem driver (e por quê)
 
