@@ -1,0 +1,109 @@
+From ee58ad95b34577e0652e83f80bbf907514d9a315 Mon Sep 17 00:00:00 2001
+From: a01core <a01core@localhost>
+Date: Sun, 1 Nov 2026 15:44:21 -0300
+Subject: [PATCH] 0310 a01core: keep reserved holes inside the RAM window away
+ from the VM
+
+---
+ osfmk/arm/pmap/pmap.c | 71 +++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 71 insertions(+)
+
+diff --git a/osfmk/arm/pmap/pmap.c b/osfmk/arm/pmap/pmap.c
+index 9f9e4aa..93cd262 100644
+--- a/osfmk/arm/pmap/pmap.c
++++ b/osfmk/arm/pmap/pmap.c
+@@ -2590,6 +2590,68 @@ pmap_is_bad_ram(__unused ppnum_t ppn)
+  * Initialize the count of available pages. No lock needed here,
+  * as this code is called while kernel boot up is single threaded.
+  */
++#if defined(ARM64_BOARD_CONFIG_A01CORE)
++/*
++ * Galaxy A01 Core: the kernel-managed RAM window spans both 1 GiB DRAM ranks, and LK
++ * keeps a few small ranges reserved inside it (firmware, DRAMC dummy-read targets).
++ * shim/a01core lists every reserved range it found inside the window in the ADT as
++ * /chosen "a01core-ram-holes" = <base, size> pairs (u64); those pages are never handed
++ * to the VM. The physmap still maps them (they are DRAM), nothing allocates them.
++ */
++#define A01_MAX_RAM_HOLES 8
++static struct {
++	pmap_paddr_t start, end;
++} a01_ram_holes[A01_MAX_RAM_HOLES];
++static unsigned int a01_n_ram_holes;
++
++static void
++a01_load_ram_holes(pmap_paddr_t first, pmap_paddr_t end)
++{
++	DTEntry chosen;
++	void const *prop = NULL;
++	unsigned int size = 0;
++	if (SecureDTLookupEntry(NULL, "/chosen", &chosen) != kSuccess ||
++	    SecureDTGetProperty(chosen, "a01core-ram-holes", &prop, &size) != kSuccess || !prop) {
++		return;
++	}
++	const uint64_t *v = (const uint64_t *)prop;
++	for (unsigned int i = 0; i + 1 < size / sizeof(uint64_t) && a01_n_ram_holes < A01_MAX_RAM_HOLES; i += 2) {
++		if (!v[i + 1]) {
++			continue;
++		}
++		pmap_paddr_t s = trunc_page((pmap_paddr_t)v[i]);
++		pmap_paddr_t e = round_page((pmap_paddr_t)(v[i] + v[i + 1]));
++		if (s < first) {
++			s = first;
++		}
++		if (e > end) {
++			e = end;
++		}
++		if (s >= e) {
++			continue;
++		}
++		a01_ram_holes[a01_n_ram_holes].start = s;
++		a01_ram_holes[a01_n_ram_holes].end = e;
++		a01_n_ram_holes++;
++		avail_page_count -= (unsigned int)atop(e - s);
++		kprintf("A01CORE RAM: hole %#llx-%#llx kept away from the VM
++",
++		    (unsigned long long)s, (unsigned long long)e);
++	}
++}
++
++static pmap_paddr_t
++a01_skip_ram_hole(pmap_paddr_t pa)
++{
++	for (unsigned int i = 0; i < a01_n_ram_holes; i++) {
++		if (pa >= a01_ram_holes[i].start && pa < a01_ram_holes[i].end) {
++			return a01_ram_holes[i].end;
++		}
++	}
++	return pa;
++}
++#endif
++
+ static void
+ initialize_ram_ranges(void)
+ {
+@@ -2600,6 +2662,9 @@ initialize_ram_ranges(void)
+ 	assert(first == (first & ~PAGE_MASK));
+ 	assert(end == (end & ~PAGE_MASK));
+ 	avail_page_count = atop(end - first);
++#if defined(ARM64_BOARD_CONFIG_A01CORE)
++	a01_load_ram_holes(first, end);
++#endif
+ 
+ 	need_ram_ranges_init = false;
+ }
+@@ -2643,6 +2708,12 @@ pmap_next_page(
+ 	}
+ 
+ 
++#if defined(ARM64_BOARD_CONFIG_A01CORE)
++	for (pmap_paddr_t next = a01_skip_ram_hole(first_avail); next != first_avail;
++	    next = a01_skip_ram_hole(first_avail)) {
++		first_avail = next;
++	}
++#endif
+ 	if (first_avail != avail_end) {
+ 		*pnum = (ppnum_t)atop(first_avail);
+ 		first_avail += PAGE_SIZE;
+-- 
+2.55.0.windows.5
+

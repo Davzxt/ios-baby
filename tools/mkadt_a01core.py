@@ -85,6 +85,9 @@ def build(ram, fb_pa, fb_stride, canvas_mode):
     set_prop(chosen, 'dram-size', mkadt.u64(ram[1]))
     set_prop(chosen, 'firmware-version', mkadt.cstr('a01core-entry'))
     set_prop(chosen, 'system-firmware-version', mkadt.cstr('a01core-entry'))
+    # Filled by shim/a01core at boot: reserved <base, size> u64 pairs inside the RAM window
+    # that xnu 0310 keeps away from the VM (8 slots, zeros = unused).
+    set_prop(chosen, 'a01core-ram-holes', bytes(16 * 8))
     # Synthetic, locally administered addresses (see mkadt_herolte.py: without
     # them MobileGestalt waits for a Wi-Fi/Bluetooth driver forever).
     for name, last in (('wifi0', 1), ('bluetooth0', 2), ('ethernet0', 3)):

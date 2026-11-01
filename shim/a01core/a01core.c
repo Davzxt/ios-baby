@@ -418,6 +418,65 @@ static int check_region(const char *what, uint64_t base, uint64_t size)
     return 0;
 }
 
+/* ---- reserved ranges inside the XNU window ("holes") ----
+ * LK keeps small ranges reserved inside the 2 GiB of DRAM (firmware, DRAMC dummy-read
+ * targets). Instead of refusing the window, list the ones inside it in the ADT
+ * (/chosen a01core-ram-holes, <base, size> u64 pairs); the kernel (xnu 0310) never hands
+ * those pages to the VM. Only small ranges well above the kernel image are accepted. */
+#define MAX_HOLES          8
+#define HOLE_MAX_SIZE      0x1000000ULL    /* 16 MiB */
+#define HOLE_KERNEL_MARGIN 0x8000000ULL    /* nothing in the first 128 MiB (kernel, early allocations) */
+static uint64_t holes[MAX_HOLES][2];
+static unsigned nholes;
+
+static int collect_holes(uint64_t base, uint64_t size)
+{
+    nholes = 0;
+    for (unsigned i = 0; i < nrsv; i++) {
+        if (!overlaps(base, size, rsv[i].base, rsv[i].size))
+            continue;
+        int bad = rsv[i].size > HOLE_MAX_SIZE || rsv[i].base < base + HOLE_KERNEL_MARGIN ||
+                  rsv[i].base + rsv[i].size > base + size || nholes >= MAX_HOLES;
+        s(bad ? "XNU RAM HITS " : "HOLE ");
+        hex(rsv[i].base);
+        s("+");
+        hex(rsv[i].size);
+        if (rsv[i].name) {
+            s(" ");
+            s(rsv[i].name);
+        }
+        line_end(bad ? RED : YELLOW);
+        if (bad)
+            return 0;
+        holes[nholes][0] = rsv[i].base;
+        holes[nholes][1] = rsv[i].size;
+        nholes++;
+    }
+    return 1;
+}
+
+static int adt_set_holes(uintptr_t adt, uint64_t len)
+{
+    static const char key[] = "a01core-ram-holes";
+    for (uint64_t o = 0; o + 36 + 16 * MAX_HOLES <= len; o += 4) {
+        const volatile char *n = (const volatile char *)(adt + o);
+        unsigned k = 0;
+        while (key[k] && n[k] == key[k])
+            k++;
+        if (key[k] || n[k])
+            continue;
+        if (*(volatile uint32_t *)(adt + o + 32) != 16 * MAX_HOLES)
+            continue;
+        volatile uint64_t *v = (volatile uint64_t *)(adt + o + 36);
+        for (unsigned i = 0; i < MAX_HOLES; i++) {
+            v[2 * i] = i < nholes ? holes[i][0] : 0;
+            v[2 * i + 1] = i < nholes ? holes[i][1] : 0;
+        }
+        return 1;
+    }
+    return 0;
+}
+
 /* ---- framebuffer discovery ---- */
 static void find_framebuffer(void)
 {
@@ -734,7 +793,17 @@ uintptr_t a01_main(uintptr_t fdt, uint64_t entry_el, uint64_t sctlr)
         p->entry_va < p->virt_base || p->kernel_end < p->virt_base || !p->mem_size)
         return fail("BAD SWEETXNU PAYLOAD");
 
-    int ok = check_region("XNU RAM", p->phys_base, p->mem_size);
+    int ok = inside_dram(p->phys_base, p->mem_size) &&
+             !(fb_base && overlaps(p->phys_base, p->mem_size, fb_base, (uint64_t)fb_stride * FB_H)) &&
+             collect_holes(p->phys_base, p->mem_size);
+    s("XNU RAM ");
+    hex(p->phys_base);
+    s("+");
+    hex(p->mem_size);
+    s(ok ? " OK, HOLES " : " NOT USABLE");
+    if (ok)
+        dec(nholes);
+    line_end(ok ? GREEN : RED);
     ok &= check_region("SURFACE", SURFACE_PA, SURFACE_SIZE);
     if (overlaps(p->phys_base, p->mem_size, SURFACE_PA, SURFACE_SIZE) ||
         overlaps(p->phys_base, p->mem_size, rd_start, length) ||
@@ -773,6 +842,8 @@ uintptr_t a01_main(uintptr_t fdt, uint64_t entry_el, uint64_t sctlr)
     if (ba_pa + PAGE > memory_end)
         return fail("NO ROOM FOR BOOT ARGS");
     memcpy((void *)adt_pa, (const void *)(rd_start + p->adt_off), p->adt_size);
+    if (!adt_set_holes(adt_pa, p->adt_size) && nholes)
+        return fail("ADT HAS NO a01core-ram-holes: REBUILD ADT");
     memset((void *)ba_pa, 0, PAGE);
     volatile struct boot_args *ba = (volatile struct boot_args *)ba_pa;
     ba->Revision = 2;

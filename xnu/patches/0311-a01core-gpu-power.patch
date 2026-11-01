@@ -1,0 +1,201 @@
+From 2b39412e1acbf85f6927ab230e16fd1c08358b96 Mon Sep 17 00:00:00 2001
+From: a01core <a01core@localhost>
+Date: Sun, 1 Nov 2026 15:47:48 -0300
+Subject: [PATCH] 0311 a01core: GE8100 power-on and BVNC readback (a01gpu=1)
+
+---
+ bsd/conf/files                |   1 +
+ bsd/dev/a01core_gpu.c         | 153 ++++++++++++++++++++++++++++++++++
+ iokit/bsddev/IOKitBSDInit.cpp |   2 +
+ 3 files changed, 156 insertions(+)
+ create mode 100644 bsd/dev/a01core_gpu.c
+
+diff --git a/bsd/conf/files b/bsd/conf/files
+index 71678f8..540acb8 100644
+--- a/bsd/conf/files
++++ b/bsd/conf/files
+@@ -118,6 +118,7 @@ bsd/dev/a01core_keys.c			standard
+ bsd/dev/a01core_touch.c			standard
+ bsd/dev/a01core_power.c			standard
+ bsd/dev/a01core_i2c.c			standard
++bsd/dev/a01core_gpu.c			standard
+ bsd/dev/sweet_sample.c			standard
+ bsd/dev/sweet_keys.c			standard
+ bsd/dev/sweet_touch.c			standard
+diff --git a/bsd/dev/a01core_gpu.c b/bsd/dev/a01core_gpu.c
+new file mode 100644
+index 0000000..49562c2
+--- /dev/null
++++ b/bsd/dev/a01core_gpu.c
+@@ -0,0 +1,153 @@
++/*
++ * Galaxy A01 Core (MT6739): PowerVR Rogue GE8100 bring-up, step 1 -- power the GPU
++ * subsystem (MFG) and read the core's own identity register.
++ *
++ * Sources (SM-A013 GPL kernel, A013GXXU4AVF4):
++ *   drivers/clk/mediatek/clk-mt6739-pg.c: spm_mtcmos_ctrl_mfg / _mfg_core0 (STA_POWER_ON):
++ *     SPM 0x10006000: MFG_PWR_CON 0x338, MFG_CORE0_PWR_CON 0x33c, PWR_STATUS 0x180,
++ *     PWR_STATUS_2ND 0x184; bits RST_B 0, ISO 1, ON 2, ON_2ND 3, CLK_DIS 4, SRAM_PDN 5,
++ *     SRAM_PDN_ACK 6; status MFG bit 4, MFG_CORE0 bit 31.
++ *     Bus protect: infracfg_ao 0x10001000 + 0x2a4 (PROTECTEN_CLR) bits 21, 22;
++ *     TOPAXI_SI0_CTL 0x200: clear bit 1, set bit 7.
++ *   gpu_rgx/m1.11ED5425693 (the DDK matching the shipped userland 1.11@5425693):
++ *     hwdefs/km/rgx_cr_defs_km.h RGX_CR_CORE_ID__PBVNC 0x0020 (B 63:48, V 47:32,
++ *     N 31:16, C 15:0); hwdefs/km/rgx_bvnc_table_km.h lists 22.49.21.16 (GE8100,
++ *     config 22.V.21.16: one cluster, MIPS firmware processor).
++ *   arch/arm/boot/dts/mt6739.dts: mfg_auckland@13000000 (RGX registers), mfg_cfg@13ffe000.
++ *
++ * Off by default (an MMIO read of an unpowered block can stall the bus): boot with
++ * a01gpu=1. The result is printed: "A01CORE GPU: BVNC 22.49.21.16 (GE8100) OK".
++ * Next steps (not here): firmware (vendor rgx.fw, MIPS) load and boot, then a client
++ * interface for the open Mesa "pvr" userland.
++ */
++#if defined(ARM64_BOARD_CONFIG_A01CORE)
++#include <sys/param.h>
++#include <sys/systm.h>
++#include <machine/machine_routines.h>
++#include <pexpert/pexpert.h>
++
++extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
++extern void delay(int usec);
++void a01core_gpu_probe(void);
++
++#define SPM_PA               0x10006000u
++#define SPM_POWERON_CONFIG   0x000u
++#define SPM_PROJECT_KEY      ((0xb16u << 16) | 1u)
++#define SPM_PWR_STATUS       0x180u
++#define SPM_PWR_STATUS_2ND   0x184u
++#define SPM_MFG_PWR_CON      0x338u
++#define SPM_MFG0_PWR_CON     0x33cu
++#define PWR_RST_B            (1u << 0)
++#define PWR_ISO              (1u << 1)
++#define PWR_ON               (1u << 2)
++#define PWR_ON_2ND           (1u << 3)
++#define PWR_CLK_DIS          (1u << 4)
++#define SRAM_PDN             (1u << 5)
++#define SRAM_PDN_ACK         (1u << 6)
++#define STA_MFG              (1u << 4)
++#define STA_MFG_CORE0        (1u << 31)
++
++#define INFRA_AO_PA          0x10001000u
++#define INFRA_SI0_CTL        0x200u
++#define INFRA_PROTECTEN_STA1 0x228u
++#define INFRA_PROTECTEN_CLR  0x2a4u
++#define MFG_PROT_BITS        ((1u << 21) | (1u << 22))
++
++#define RGX_PA               0x13000000u
++#define RGX_CORE_ID          0x018u
++#define RGX_CORE_PBVNC       0x020u
++#define MFG_CFG_PA           0x13ffe000u
++
++static uint32_t
++rd(vm_offset_t b, uint32_t o)
++{
++	uint32_t v = *(volatile uint32_t *)(b + o);
++	__asm__ volatile ("dmb oshld" ::: "memory");
++	return v;
++}
++
++static void
++wr(vm_offset_t b, uint32_t o, uint32_t v)
++{
++	__asm__ volatile ("dmb oshst" ::: "memory");
++	*(volatile uint32_t *)(b + o) = v;
++	__asm__ volatile ("dsb osh" ::: "memory");
++}
++
++static int
++wait_bits(vm_offset_t b, uint32_t o, uint32_t mask, uint32_t want)
++{
++	for (unsigned i = 0; i < 10000; i++) {
++		if ((rd(b, o) & mask) == want) {
++			return 0;
++		}
++		delay(1);
++	}
++	return 1;
++}
++
++/* spm_mtcmos_ctrl_* STA_POWER_ON, bounded waits instead of endless loops */
++static int
++power_on(vm_offset_t spm, uint32_t con, uint32_t sta)
++{
++	if ((rd(spm, SPM_PWR_STATUS) & sta) && (rd(spm, SPM_PWR_STATUS_2ND) & sta) &&
++	    (rd(spm, con) & PWR_RST_B) && !(rd(spm, con) & (PWR_ISO | SRAM_PDN))) {
++		return 0;                                 /* already on (LK or ATF) */
++	}
++	wr(spm, con, rd(spm, con) | PWR_ON);
++	wr(spm, con, rd(spm, con) | PWR_ON_2ND);
++	if (wait_bits(spm, SPM_PWR_STATUS, sta, sta) || wait_bits(spm, SPM_PWR_STATUS_2ND, sta, sta)) {
++		return 1;
++	}
++	wr(spm, con, rd(spm, con) & ~PWR_CLK_DIS);
++	wr(spm, con, rd(spm, con) & ~PWR_ISO);
++	wr(spm, con, rd(spm, con) | PWR_RST_B);
++	wr(spm, con, rd(spm, con) & ~SRAM_PDN);
++	return wait_bits(spm, con, SRAM_PDN_ACK, 0) ? 2 : 0;
++}
++
++void
++a01core_gpu_probe(void)
++{
++	int enabled = 0;
++	(void)PE_parse_boot_argn("a01gpu", &enabled, sizeof(enabled));
++	if (!enabled) {
++		printf("A01CORE GPU: not powered (boot-arg a01gpu=1 runs the bring-up test)\n");
++		return;
++	}
++	vm_offset_t spm = ml_io_map(SPM_PA, 0x1000);
++	vm_offset_t infra = ml_io_map(INFRA_AO_PA, 0x1000);
++	vm_offset_t rgx = ml_io_map(RGX_PA, 0x1000);
++	vm_offset_t mfgcfg = ml_io_map(MFG_CFG_PA, 0x1000);
++	if (!spm || !infra || !rgx || !mfgcfg) {
++		printf("A01CORE GPU: MMIO map failed\n");
++		return;
++	}
++	printf("A01CORE GPU: before: status %#x/%#x mfg_con %#x core0_con %#x protect_sta %#x\n",
++	    rd(spm, SPM_PWR_STATUS), rd(spm, SPM_PWR_STATUS_2ND), rd(spm, SPM_MFG_PWR_CON),
++	    rd(spm, SPM_MFG0_PWR_CON), rd(infra, INFRA_PROTECTEN_STA1));
++	wr(spm, SPM_POWERON_CONFIG, SPM_PROJECT_KEY);
++	int e0 = power_on(spm, SPM_MFG_PWR_CON, STA_MFG);
++	int e1 = e0 ? -1 : power_on(spm, SPM_MFG0_PWR_CON, STA_MFG_CORE0);
++	if (e0 || e1) {
++		printf("A01CORE GPU: power-on failed (mfg %d, core0 %d): status %#x/%#x\n", e0, e1,
++		    rd(spm, SPM_PWR_STATUS), rd(spm, SPM_PWR_STATUS_2ND));
++		return;
++	}
++	wr(infra, INFRA_PROTECTEN_CLR, MFG_PROT_BITS);
++	if (wait_bits(infra, INFRA_PROTECTEN_STA1, MFG_PROT_BITS, 0)) {
++		printf("A01CORE GPU: bus protection did not release (sta1 %#x)\n", rd(infra, INFRA_PROTECTEN_STA1));
++		return;
++	}
++	wr(infra, INFRA_SI0_CTL, rd(infra, INFRA_SI0_CTL) & ~0x2u);
++	wr(infra, INFRA_SI0_CTL, rd(infra, INFRA_SI0_CTL) | (1u << 7));
++	delay(100);
++	printf("A01CORE GPU: powered: status %#x/%#x, mfg_cfg %#x %#x %#x\n",
++	    rd(spm, SPM_PWR_STATUS), rd(spm, SPM_PWR_STATUS_2ND),
++	    rd(mfgcfg, 0x0), rd(mfgcfg, 0x4), rd(mfgcfg, 0x8));
++	uint32_t lo = rd(rgx, RGX_CORE_PBVNC), hi = rd(rgx, RGX_CORE_PBVNC + 4);
++	unsigned b = hi >> 16, v = hi & 0xffffu, n = lo >> 16, c = lo & 0xffffu;
++	printf("A01CORE GPU: core id %#x, BVNC %u.%u.%u.%u%s\n", rd(rgx, RGX_CORE_ID), b, v, n, c,
++	    (b == 22 && v == 49 && n == 21 && c == 16) ? " (GE8100) OK" : " (unexpected)");
++}
++#endif /* ARM64_BOARD_CONFIG_A01CORE */
+diff --git a/iokit/bsddev/IOKitBSDInit.cpp b/iokit/bsddev/IOKitBSDInit.cpp
+index feb3076..74c53c1 100644
+--- a/iokit/bsddev/IOKitBSDInit.cpp
++++ b/iokit/bsddev/IOKitBSDInit.cpp
+@@ -781,8 +781,10 @@ IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
+ 	extern void a01core_touch_probe(void);
+ 	extern void a01core_power_probe(void);
+ 	extern void a01core_i2c_probe(void);
++	extern void a01core_gpu_probe(void);
+ 	a01core_power_probe();
+ 	a01core_i2c_probe();
++	a01core_gpu_probe();
+ 	a01core_keys_init();
+ 	a01core_touch_probe();
+ 	}
+-- 
+2.55.0.windows.5
+

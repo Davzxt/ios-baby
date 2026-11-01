@@ -85,7 +85,7 @@ jobs:
 
       - name: Deps
         run: |
-          brew install jq gum bash cmake ninja
+          brew install jq gum bash cmake ninja ccache
           # build.sh only checks that xcodes exists (Xcode is preinstalled); no bottle on macOS 14
           printf '#!/bin/sh\nexit 0\n' | sudo tee /usr/local/bin/xcodes >/dev/null
           sudo chmod +x /usr/local/bin/xcodes
@@ -99,9 +99,25 @@ jobs:
           xcodebuild -version
           xcrun --find iig
 
+      # Compiler cache between runs: XNU's MakeInc.def honours CCACHE, so a push that
+      # touches a few files recompiles only those (the full build is ~17 min).
+      - uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-${{ matrix.runner }}-${{ env.MACHINE_CONFIG }}-${{ env.KERNEL_CONFIG }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ matrix.runner }}-${{ env.MACHINE_CONFIG }}-${{ env.KERNEL_CONFIG }}-
+
       - name: Build
         working-directory: dxb
         env:
+          CCACHE: ccache
+          CCACHE_DIR: /Users/runner/.ccache
+          CCACHE_MAXSIZE: 3G
+          CCACHE_COMPILERCHECK: content
+          # sources are re-extracted every run: hash contents, ignore fresh mtimes
+          CCACHE_SLOPPINESS: include_file_mtime,include_file_ctime,time_macros,file_stat_matches
+          CCACHE_BASEDIR: ${{ github.workspace }}
           # keep going after errors so one run reports every compile failure
           MAKEFLAGS: ${{ inputs.keep_going == 'false' && '' || '-k' }}
         run: |
@@ -121,7 +137,9 @@ jobs:
           esac
           export A01CORE_DEFINES
           echo "A01CORE_DEFINES=$A01CORE_DEFINES"
+          ccache -z || true
           bash build.sh 2>&1 | tee ../build.log
+          ccache -s || true
 
       # Logs need a GitHub sign-in to read; check-run annotations are public.
       # Publish the first errors and the log tail so failures can be read
