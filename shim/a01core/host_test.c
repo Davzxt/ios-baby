@@ -1,6 +1,9 @@
 /* Host test: run the loader's FDT scan on a real A01 Core DTB.
  *   gcc -DA01_HOST_TEST -o host_test host_test.c && ./host_test boot.dtb */
 #define A01_HOST_TEST 1
+/* the C runtime owns _start on Linux: rename the loader's linker symbols here */
+#define _start shim_start
+#define _image_end shim_image_end
 #include <stdio.h>
 #include <stdlib.h>
 #include "a01core.c"
