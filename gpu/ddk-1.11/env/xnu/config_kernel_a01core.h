@@ -125,4 +125,6 @@
 #define PVRSRV_RGX_LOG2_CLIENT_CCB_MAX_SIZE_KICKSYNC 13
 #define PVR_BUILD_DIR "a01core"
 #define PVRSRV_A01_XNU 1
+/* libkern exports its own OSMemoryBarrier(): keep the DDK's apart */
+#define OSMemoryBarrier PVROSMemoryBarrier
 #endif

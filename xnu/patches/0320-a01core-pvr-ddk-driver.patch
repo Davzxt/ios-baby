@@ -1,0 +1,523 @@
+From 0d2b1104c234197da9f0216f70dd750191289004 Mon Sep 17 00:00:00 2001
+From: a01core <a01core@localhost>
+Date: Sun, 1 Nov 2026 20:10:33 -0300
+Subject: [PATCH] 0320 a01core: PowerVR DDK 1.11 driver (bsd/a01_pvr) and its
+ IOKit front end A01CoreGPU
+
+---
+ bsd/conf/Makefile.template      |   7 +
+ bsd/conf/files                  |  97 ++++++++++++++
+ bsd/dev/a01core_gpu.c           |  76 +++++++++--
+ iokit/Kernel/arm/A01CoreGPU.cpp | 228 ++++++++++++++++++++++++++++++++
+ iokit/KernelConfigTables.cpp    |   7 +
+ iokit/conf/files.arm64          |   1 +
+ 6 files changed, 403 insertions(+), 13 deletions(-)
+ create mode 100644 iokit/Kernel/arm/A01CoreGPU.cpp
+
+diff --git a/bsd/conf/Makefile.template b/bsd/conf/Makefile.template
+index 32daad1..1cb188c 100644
+--- a/bsd/conf/Makefile.template
++++ b/bsd/conf/Makefile.template
+@@ -57,6 +57,13 @@ sweet_pthread_synch.o_INCFLAGS = $(SWEET_PTHREAD_INC)
+ SWEET_HFS_ROOT = $(SRCROOT)/bsd/sweet_hfs
+ SWEET_HFS_OBJS = BTree.o BTreeAllocate.o BTreeMiscOps.o BTreeNodeOps.o BTreeNodeReserve.o BTreeScanner.o BTreeTreeOps.o BTreeWrapper.o CatalogUtilities.o FileExtentMapping.o FileIDsServices.o MacOSStubs.o UnicodeWrappers.o VolumeAllocation.o hfs_attrlist.o hfs_btreeio.o hfs_catalog.o hfs_chash.o hfs_cnode.o hfs_cprotect.o hfs_endian.o hfs_extents.o hfs_fsinfo.o hfs_hotfiles.o hfs_journal.o hfs_link.o hfs_lookup.o hfs_notification.o hfs_quota.o hfs_readwrite.o hfs_resize.o hfs_search.o hfs_vfsops.o hfs_vfsutils.o hfs_vnops.o hfs_xattr.o rangelist.o hfs_encodinghint.o hfs_encodings.o sweet_hfs_iokit.o
+ $(foreach o,$(SWEET_HFS_OBJS),$(eval $(o)_CFLAGS_ADD += -include $(SWEET_HFS_ROOT)/sweet_hfs_compat.h -I$(SWEET_HFS_ROOT) -I$(SWEET_HFS_ROOT)/core))
++
++# A01 Core GE8100: PowerVR DDK 1.11 kernel services (bsd/a01_pvr, staged by 0319-stage-a01-pvr.sh).
++# The DDK brings its own headers and OS layer (env/xnu); its warnings are not XNU's to fix.
++A01PVR_ROOT = $(SRCROOT)/bsd/a01_pvr/ddk
++A01PVR_OBJS = pvr_devicemem_heapcfg.o pvr_devicemem.o pvr_devicemem_utils.o pvr_hash.o pvr_ra.o pvr_sync.o pvr_mem_utils.o pvr_devicemem_server.o pvr_handle.o pvr_lists.o pvr_mmu_common.o pvr_connection_server.o pvr_physheap.o pvr_physmem.o pvr_physmem_lma.o pvr_physmem_hostmem.o pvr_pmr.o pvr_power.o pvr_process_stats.o pvr_pvr_notifier.o pvr_pvrsrv.o pvr_srvcore.o pvr_sync_checkpoint.o pvr_sync_server.o pvr_htbuffer.o pvr_htbserver.o pvr_tlintern.o pvr_tlclient.o pvr_tlserver.o pvr_tlstream.o pvr_cache_km.o pvr_uniq_key_splay_tree.o pvr_pvrsrv_pool.o pvr_pvrsrv_bridge_init.o pvr_info_page_km.o pvr_pvrsrv_error.o pvr_rgxfwdbg.o pvr_rgxbreakpoint.o pvr_rgxccb.o pvr_rgxdebug.o pvr_rgxfwutils.o pvr_rgxinit.o pvr_rgxbvnc.o pvr_rgxkicksync.o pvr_rgxlayer_impl.o pvr_rgxmem.o pvr_rgxmmuinit.o pvr_rgxregconfig.o pvr_rgxta3d.o pvr_rgxsyncutils.o pvr_rgxtransfer.o pvr_rgxtdmtransfer.o pvr_rgxutils.o pvr_rgxmipsmmuinit.o pvr_rgxhwperf.o pvr_rgxpower.o pvr_rgxstartstop.o pvr_rgxtimecorr.o pvr_rgxcompute.o pvr_rgxsignals.o pvr_rgxfwimageutils.o pvr_rgxsrvinit.o pvr_devicemem_history_server.o pvr_rgx_hwperf_table.o pvr_client_cache_direct_bridge.o pvr_client_devicememhistory_direct_bridge.o pvr_client_htbuffer_direct_bridge.o pvr_client_mm_direct_bridge.o pvr_client_pvrtl_direct_bridge.o pvr_client_sync_direct_bridge.o pvr_client_synctracking_direct_bridge.o pvr_server_cache_bridge.o pvr_server_cmm_bridge.o pvr_server_devicememhistory_bridge.o pvr_server_dmabuf_bridge.o pvr_server_htbuffer_bridge.o pvr_server_mm_bridge.o pvr_server_pvrtl_bridge.o pvr_server_rgxbreakpoint_bridge.o pvr_server_rgxcmp_bridge.o pvr_server_rgxfwdbg_bridge.o pvr_server_rgxhwperf_bridge.o pvr_server_rgxkicksync_bridge.o pvr_server_rgxregconfig_bridge.o pvr_server_rgxsignals_bridge.o pvr_server_rgxta3d_bridge.o pvr_server_rgxtq2_bridge.o pvr_server_rgxtq_bridge.o pvr_server_srvcore_bridge.o pvr_server_sync_bridge.o pvr_server_synctracking_bridge.o pvr_a01_platform.o pvr_handle_xnu.o pvr_osfunc_xnu.o pvr_physmem_xnu.o pvr_pvr_xnu_entry.o pvr_sysconfig_a01.o
++$(foreach o,$(A01PVR_OBJS),$(eval $(o)_CFLAGS_ADD += -include $(A01PVR_ROOT)/env/xnu/config_kernel_a01core.h -DPVRSRV_A01_XNU -D__KERNEL__ -I$(A01PVR_ROOT)/env/xnu -I$(A01PVR_ROOT)/env/xnu/sysinc -I$(A01PVR_ROOT)/include -I$(A01PVR_ROOT)/include/public -I$(A01PVR_ROOT)/hwdefs -I$(A01PVR_ROOT)/hwdefs/km -I$(A01PVR_ROOT)/services/include -I$(A01PVR_ROOT)/services/include/shared -I$(A01PVR_ROOT)/services/shared/include -I$(A01PVR_ROOT)/services/server/include -I$(A01PVR_ROOT)/services/server/devices/rgx -I$(A01PVR_ROOT)/services/system/include -I$(A01PVR_ROOT)/services/shared/devices/rgx -I$(A01PVR_ROOT)/services/server/common -I$(A01PVR_ROOT)/generated/cache_bridge -I$(A01PVR_ROOT)/generated/cmm_bridge -I$(A01PVR_ROOT)/generated/devicememhistory_bridge -I$(A01PVR_ROOT)/generated/dmabuf_bridge -I$(A01PVR_ROOT)/generated/htbuffer_bridge -I$(A01PVR_ROOT)/generated/mm_bridge -I$(A01PVR_ROOT)/generated/pvrtl_bridge -I$(A01PVR_ROOT)/generated/rgxbreakpoint_bridge -I$(A01PVR_ROOT)/generated/rgxcmp_bridge -I$(A01PVR_ROOT)/generated/rgxfwdbg_bridge -I$(A01PVR_ROOT)/generated/rgxhwperf_bridge -I$(A01PVR_ROOT)/generated/rgxkicksync_bridge -I$(A01PVR_ROOT)/generated/rgxregconfig_bridge -I$(A01PVR_ROOT)/generated/rgxsignals_bridge -I$(A01PVR_ROOT)/generated/rgxta3d_bridge -I$(A01PVR_ROOT)/generated/rgxtq2_bridge -I$(A01PVR_ROOT)/generated/rgxtq_bridge -I$(A01PVR_ROOT)/generated/srvcore_bridge -I$(A01PVR_ROOT)/generated/sync_bridge -I$(A01PVR_ROOT)/generated/synctracking_bridge))
++$(foreach o,$(A01PVR_OBJS),$(eval $(o)_CWARNFLAGS_ADD += -w))
+ # HFSEncodings is a separate kext on Apple with its own allocation counter.
+ hfs_encodings.o_CFLAGS_ADD += -Dhfs_allocated=hfs_encodings_allocated
+ hfs_encodinghint.o_CFLAGS_ADD += -Dhfs_allocated=hfs_encodings_allocated
+diff --git a/bsd/conf/files b/bsd/conf/files
+index 540acb8..575e321 100644
+--- a/bsd/conf/files
++++ b/bsd/conf/files
+@@ -119,6 +119,103 @@ bsd/dev/a01core_touch.c			standard
+ bsd/dev/a01core_power.c			standard
+ bsd/dev/a01core_i2c.c			standard
+ bsd/dev/a01core_gpu.c			standard
++bsd/a01_pvr/pvr_devicemem_heapcfg.c			standard
++bsd/a01_pvr/pvr_devicemem.c			standard
++bsd/a01_pvr/pvr_devicemem_utils.c			standard
++bsd/a01_pvr/pvr_hash.c			standard
++bsd/a01_pvr/pvr_ra.c			standard
++bsd/a01_pvr/pvr_sync.c			standard
++bsd/a01_pvr/pvr_mem_utils.c			standard
++bsd/a01_pvr/pvr_devicemem_server.c			standard
++bsd/a01_pvr/pvr_handle.c			standard
++bsd/a01_pvr/pvr_lists.c			standard
++bsd/a01_pvr/pvr_mmu_common.c			standard
++bsd/a01_pvr/pvr_connection_server.c			standard
++bsd/a01_pvr/pvr_physheap.c			standard
++bsd/a01_pvr/pvr_physmem.c			standard
++bsd/a01_pvr/pvr_physmem_lma.c			standard
++bsd/a01_pvr/pvr_physmem_hostmem.c			standard
++bsd/a01_pvr/pvr_pmr.c			standard
++bsd/a01_pvr/pvr_power.c			standard
++bsd/a01_pvr/pvr_process_stats.c			standard
++bsd/a01_pvr/pvr_pvr_notifier.c			standard
++bsd/a01_pvr/pvr_pvrsrv.c			standard
++bsd/a01_pvr/pvr_srvcore.c			standard
++bsd/a01_pvr/pvr_sync_checkpoint.c			standard
++bsd/a01_pvr/pvr_sync_server.c			standard
++bsd/a01_pvr/pvr_htbuffer.c			standard
++bsd/a01_pvr/pvr_htbserver.c			standard
++bsd/a01_pvr/pvr_tlintern.c			standard
++bsd/a01_pvr/pvr_tlclient.c			standard
++bsd/a01_pvr/pvr_tlserver.c			standard
++bsd/a01_pvr/pvr_tlstream.c			standard
++bsd/a01_pvr/pvr_cache_km.c			standard
++bsd/a01_pvr/pvr_uniq_key_splay_tree.c			standard
++bsd/a01_pvr/pvr_pvrsrv_pool.c			standard
++bsd/a01_pvr/pvr_pvrsrv_bridge_init.c			standard
++bsd/a01_pvr/pvr_info_page_km.c			standard
++bsd/a01_pvr/pvr_pvrsrv_error.c			standard
++bsd/a01_pvr/pvr_rgxfwdbg.c			standard
++bsd/a01_pvr/pvr_rgxbreakpoint.c			standard
++bsd/a01_pvr/pvr_rgxccb.c			standard
++bsd/a01_pvr/pvr_rgxdebug.c			standard
++bsd/a01_pvr/pvr_rgxfwutils.c			standard
++bsd/a01_pvr/pvr_rgxinit.c			standard
++bsd/a01_pvr/pvr_rgxbvnc.c			standard
++bsd/a01_pvr/pvr_rgxkicksync.c			standard
++bsd/a01_pvr/pvr_rgxlayer_impl.c			standard
++bsd/a01_pvr/pvr_rgxmem.c			standard
++bsd/a01_pvr/pvr_rgxmmuinit.c			standard
++bsd/a01_pvr/pvr_rgxregconfig.c			standard
++bsd/a01_pvr/pvr_rgxta3d.c			standard
++bsd/a01_pvr/pvr_rgxsyncutils.c			standard
++bsd/a01_pvr/pvr_rgxtransfer.c			standard
++bsd/a01_pvr/pvr_rgxtdmtransfer.c			standard
++bsd/a01_pvr/pvr_rgxutils.c			standard
++bsd/a01_pvr/pvr_rgxmipsmmuinit.c			standard
++bsd/a01_pvr/pvr_rgxhwperf.c			standard
++bsd/a01_pvr/pvr_rgxpower.c			standard
++bsd/a01_pvr/pvr_rgxstartstop.c			standard
++bsd/a01_pvr/pvr_rgxtimecorr.c			standard
++bsd/a01_pvr/pvr_rgxcompute.c			standard
++bsd/a01_pvr/pvr_rgxsignals.c			standard
++bsd/a01_pvr/pvr_rgxfwimageutils.c			standard
++bsd/a01_pvr/pvr_rgxsrvinit.c			standard
++bsd/a01_pvr/pvr_devicemem_history_server.c			standard
++bsd/a01_pvr/pvr_rgx_hwperf_table.c			standard
++bsd/a01_pvr/pvr_client_cache_direct_bridge.c			standard
++bsd/a01_pvr/pvr_client_devicememhistory_direct_bridge.c			standard
++bsd/a01_pvr/pvr_client_htbuffer_direct_bridge.c			standard
++bsd/a01_pvr/pvr_client_mm_direct_bridge.c			standard
++bsd/a01_pvr/pvr_client_pvrtl_direct_bridge.c			standard
++bsd/a01_pvr/pvr_client_sync_direct_bridge.c			standard
++bsd/a01_pvr/pvr_client_synctracking_direct_bridge.c			standard
++bsd/a01_pvr/pvr_server_cache_bridge.c			standard
++bsd/a01_pvr/pvr_server_cmm_bridge.c			standard
++bsd/a01_pvr/pvr_server_devicememhistory_bridge.c			standard
++bsd/a01_pvr/pvr_server_dmabuf_bridge.c			standard
++bsd/a01_pvr/pvr_server_htbuffer_bridge.c			standard
++bsd/a01_pvr/pvr_server_mm_bridge.c			standard
++bsd/a01_pvr/pvr_server_pvrtl_bridge.c			standard
++bsd/a01_pvr/pvr_server_rgxbreakpoint_bridge.c			standard
++bsd/a01_pvr/pvr_server_rgxcmp_bridge.c			standard
++bsd/a01_pvr/pvr_server_rgxfwdbg_bridge.c			standard
++bsd/a01_pvr/pvr_server_rgxhwperf_bridge.c			standard
++bsd/a01_pvr/pvr_server_rgxkicksync_bridge.c			standard
++bsd/a01_pvr/pvr_server_rgxregconfig_bridge.c			standard
++bsd/a01_pvr/pvr_server_rgxsignals_bridge.c			standard
++bsd/a01_pvr/pvr_server_rgxta3d_bridge.c			standard
++bsd/a01_pvr/pvr_server_rgxtq2_bridge.c			standard
++bsd/a01_pvr/pvr_server_rgxtq_bridge.c			standard
++bsd/a01_pvr/pvr_server_srvcore_bridge.c			standard
++bsd/a01_pvr/pvr_server_sync_bridge.c			standard
++bsd/a01_pvr/pvr_server_synctracking_bridge.c			standard
++bsd/a01_pvr/pvr_a01_platform.c			standard
++bsd/a01_pvr/pvr_handle_xnu.c			standard
++bsd/a01_pvr/pvr_osfunc_xnu.c			standard
++bsd/a01_pvr/pvr_physmem_xnu.c			standard
++bsd/a01_pvr/pvr_pvr_xnu_entry.c			standard
++bsd/a01_pvr/pvr_sysconfig_a01.c			standard
+ bsd/dev/sweet_sample.c			standard
+ bsd/dev/sweet_keys.c			standard
+ bsd/dev/sweet_touch.c			standard
+diff --git a/bsd/dev/a01core_gpu.c b/bsd/dev/a01core_gpu.c
+index b32e444..dae8350 100644
+--- a/bsd/dev/a01core_gpu.c
++++ b/bsd/dev/a01core_gpu.c
+@@ -429,14 +429,21 @@ gpu_fw_boot(vm_offset_t rgx)
+ 	}
+ }
+ 
+-void
+-a01core_gpu_probe(void)
++/*
++ * MFG power-on (0311), reusable: the DDK driver (a01gpu=2) calls it from its pre-power hook.
++ * Returns 0 when the GE8100 answers with its BVNC.
++ */
++int a01core_gpu_power_on(void);
++const void *a01core_gpu_firmware(size_t *len);
++int a01core_gpu_mode(void);
++
++static int a01_gpu_powered;
++
++int
++a01core_gpu_power_on(void)
+ {
+-	int enabled = 0;
+-	(void)PE_parse_boot_argn("a01gpu", &enabled, sizeof(enabled));
+-	if (!enabled) {
+-		printf("A01CORE GPU: not powered (boot-arg a01gpu=1 runs the bring-up test)\n");
+-		return;
++	if (a01_gpu_powered) {
++		return 0;
+ 	}
+ 	vm_offset_t spm = ml_io_map(SPM_PA, 0x1000);
+ 	vm_offset_t infra = ml_io_map(INFRA_AO_PA, 0x1000);
+@@ -444,7 +451,7 @@ a01core_gpu_probe(void)
+ 	vm_offset_t mfgcfg = ml_io_map(MFG_CFG_PA, 0x1000);
+ 	if (!spm || !infra || !rgx || !mfgcfg) {
+ 		printf("A01CORE GPU: MMIO map failed\n");
+-		return;
++		return 1;
+ 	}
+ 	printf("A01CORE GPU: before: status %#x/%#x mfg_con %#x core0_con %#x protect_sta %#x\n",
+ 	    rd(spm, SPM_PWR_STATUS), rd(spm, SPM_PWR_STATUS_2ND), rd(spm, SPM_MFG_PWR_CON),
+@@ -455,12 +462,12 @@ a01core_gpu_probe(void)
+ 	if (e0 || e1) {
+ 		printf("A01CORE GPU: power-on failed (mfg %d, core0 %d): status %#x/%#x\n", e0, e1,
+ 		    rd(spm, SPM_PWR_STATUS), rd(spm, SPM_PWR_STATUS_2ND));
+-		return;
++		return 2;
+ 	}
+ 	wr(infra, INFRA_PROTECTEN_CLR, MFG_PROT_BITS);
+ 	if (wait_bits(infra, INFRA_PROTECTEN_STA1, MFG_PROT_BITS, 0)) {
+ 		printf("A01CORE GPU: bus protection did not release (sta1 %#x)\n", rd(infra, INFRA_PROTECTEN_STA1));
+-		return;
++		return 3;
+ 	}
+ 	wr(infra, INFRA_SI0_CTL, rd(infra, INFRA_SI0_CTL) & ~0x2u);
+ 	wr(infra, INFRA_SI0_CTL, rd(infra, INFRA_SI0_CTL) | (1u << 7));
+@@ -470,10 +477,53 @@ a01core_gpu_probe(void)
+ 	    rd(mfgcfg, 0x0), rd(mfgcfg, 0x4), rd(mfgcfg, 0x8));
+ 	uint32_t lo = rd(rgx, RGX_CORE_PBVNC), hi = rd(rgx, RGX_CORE_PBVNC + 4);
+ 	unsigned b = hi >> 16, v = hi & 0xffffu, n = lo >> 16, c = lo & 0xffffu;
++	int ok = (b == 22 && v == 49 && n == 21 && c == 16);
+ 	printf("A01CORE GPU: core id %#x, BVNC %u.%u.%u.%u%s\n", rd(rgx, RGX_CORE_ID), b, v, n, c,
+-	    (b == 22 && v == 49 && n == 21 && c == 16) ? " (GE8100) OK" : " (unexpected)");
+-	if (b == 22 && v == 49 && n == 21 && c == 16) {
+-		gpu_fw_boot(rgx);
++	    ok ? " (GE8100) OK" : " (unexpected)");
++	a01_gpu_powered = ok;
++	return ok ? 0 : 4;
++}
++
++/* vendor/firmware/rgx.fw (DDK 1.11@5425693) from the payload: mkpayload.py --blob GPUFirmware= */
++const void *
++a01core_gpu_firmware(size_t *len)
++{
++	DTEntry node;
++	const uint64_t *reg;
++	unsigned int size;
++	if (SecureDTLookupEntry(NULL, "/chosen/memory-map", &node) != kSuccess ||
++	    SecureDTGetProperty(node, "GPUFirmware", (void const **)&reg, &size) != kSuccess || size < 16) {
++		printf("A01CORE GPU: no rgx.fw in the payload\n");
++		return NULL;
++	}
++	*len = (size_t)reg[1];
++	return (const void *)ml_static_ptovirt((vm_offset_t)reg[0]);
++}
++
++/* boot-arg a01gpu: 0 off, 1 bring-up test (hand loader + ping, 0314-0318), 2 full DDK driver */
++int
++a01core_gpu_mode(void)
++{
++	int mode = 0;
++	(void)PE_parse_boot_argn("a01gpu", &mode, sizeof(mode));
++	return mode;
++}
++
++void
++a01core_gpu_probe(void)
++{
++	int mode = a01core_gpu_mode();
++	if (!mode) {
++		printf("A01CORE GPU: off (a01gpu=1 bring-up test, a01gpu=2 DDK driver)\n");
++		return;
++	}
++	if (a01core_gpu_power_on()) {
++		return;
++	}
++	if (mode == 1) {
++		gpu_fw_boot(ml_io_map(RGX_PA, 0x10000));
++	} else {
++		printf("A01CORE GPU: DDK 1.11 driver takes over (A01CoreGPU)\n");
+ 	}
+ }
+ #endif /* ARM64_BOARD_CONFIG_A01CORE */
+diff --git a/iokit/Kernel/arm/A01CoreGPU.cpp b/iokit/Kernel/arm/A01CoreGPU.cpp
+new file mode 100644
+index 0000000..ec2a4d5
+--- /dev/null
++++ b/iokit/Kernel/arm/A01CoreGPU.cpp
+@@ -0,0 +1,228 @@
++/*
++ * Galaxy A01 Core (MT6739) PowerVR GE8100: IOKit front end of the DDK 1.11 kernel driver
++ * (bsd/a01_pvr, from gpu/ddk-1.11). Boot-arg a01gpu=2.
++ *
++ * A01CoreGPU            publishes the service and starts the DDK (a01pvr_driver_init).
++ * A01CoreGPUUserClient  one DDK connection per opener:
++ *   selector 0  bridge call: scalars {group, function, in ptr, in size, out ptr, out size}
++ *               -> scalar {PVRSRV_ERROR}; same contract as the Linux PVR_DRM_IOCTL_SRVKM_CMD
++ *   selector 1  map a PMR: scalar {secure PMR handle} -> scalars {PVRSRV_ERROR, user address}
++ *               (the Linux driver does this with mmap(offset = handle))
++ *
++ * GPU memory for the DDK (a01gpu_buf_*): IOBufferMemoryDescriptor below 4 GiB (32-bit GPU bus).
++ */
++#include <pexpert/arm64/board_config.h>
++#if defined(ARM64_BOARD_CONFIG_A01CORE)
++#include <IOKit/IOService.h>
++#include <IOKit/IOUserClient.h>
++#include <IOKit/IOKitKeys.h>
++#include <IOKit/IOLib.h>
++#include <IOKit/IOBufferMemoryDescriptor.h>
++#include <kern/task.h>
++
++extern "C" {
++int a01pvr_driver_init(void);
++int a01pvr_open(void **ppvConnection);
++void a01pvr_close(void *pvConnection);
++int a01pvr_bridge(void *pvConnection, uint32_t group, uint32_t func, uint64_t in, uint32_t in_size,
++    uint64_t out, uint32_t out_size);
++int a01pvr_mmap(void *pvConnection, uint64_t pmr_handle, uint64_t *uaddr);
++int a01core_gpu_mode(void);
++int a01core_gpu_power_on(void);
++}
++
++/* ---- GPU-visible memory for the DDK (gpu/ddk-1.11/env/xnu/a01gpu_buf.h) ----------------------- */
++#define A01GPU_MAX_MAPS 4
++struct a01gpu_buf {
++	IOBufferMemoryDescriptor *md;
++	uint64_t size;
++	IOMemoryMap *umaps[A01GPU_MAX_MAPS];
++};
++
++extern "C" struct a01gpu_buf *
++a01gpu_buf_alloc(uint64_t size, int contiguous)
++{
++	struct a01gpu_buf *b = IONewZero(struct a01gpu_buf, 1);
++	if (b == NULL) {
++		return NULL;
++	}
++	b->size = round_page_64(size);
++	IOOptionBits opts = kIODirectionInOut | kIOMemoryKernelUserShared;
++	if (contiguous) {
++		opts |= kIOMemoryPhysicallyContiguous;
++	}
++	/* GE8100: RGX_FEATURE_PHYS_BUS_WIDTH 32 */
++	b->md = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task, opts, b->size,
++	    0x00000000FFFFF000ULL);
++	if (b->md == NULL || b->md->prepare() != kIOReturnSuccess) {
++		OSSafeReleaseNULL(b->md);
++		IODelete(b, struct a01gpu_buf, 1);
++		return NULL;
++	}
++	return b;
++}
++
++extern "C" void
++a01gpu_buf_free(struct a01gpu_buf *b)
++{
++	if (b == NULL) {
++		return;
++	}
++	for (unsigned i = 0; i < A01GPU_MAX_MAPS; i++) {
++		OSSafeReleaseNULL(b->umaps[i]);
++	}
++	b->md->complete();
++	OSSafeReleaseNULL(b->md);
++	IODelete(b, struct a01gpu_buf, 1);
++}
++
++extern "C" void *a01gpu_buf_kva(struct a01gpu_buf *b) { return b->md->getBytesNoCopy(); }
++extern "C" uint64_t a01gpu_buf_size(struct a01gpu_buf *b) { return b->size; }
++
++extern "C" uint64_t
++a01gpu_buf_phys(struct a01gpu_buf *b, uint64_t offset)
++{
++	IOByteCount len;
++	return b->md->getPhysicalSegment(offset, &len, kIOMemoryMapperNone);
++}
++
++extern "C" int
++a01gpu_buf_map_user(struct a01gpu_buf *b, int cache_mode, uint64_t *uaddr)
++{
++	IOOptionBits cache = cache_mode == 1 ? kIOMapInhibitCache :
++	    cache_mode == 2 ? kIOMapWriteCombineCache : kIOMapDefaultCache;
++	for (unsigned i = 0; i < A01GPU_MAX_MAPS; i++) {
++		if (b->umaps[i] == NULL) {
++			b->umaps[i] = b->md->createMappingInTask(current_task(), 0, kIOMapAnywhere | cache);
++			if (b->umaps[i] == NULL) {
++				return 1;
++			}
++			*uaddr = b->umaps[i]->getAddress();
++			return 0;
++		}
++	}
++	return 2;
++}
++
++extern "C" void
++a01gpu_buf_unmap_user(struct a01gpu_buf *b, uint64_t uaddr)
++{
++	for (unsigned i = 0; i < A01GPU_MAX_MAPS; i++) {
++		if (b->umaps[i] != NULL && b->umaps[i]->getAddress() == uaddr) {
++			OSSafeReleaseNULL(b->umaps[i]);
++		}
++	}
++}
++
++/* ---- the service ---------------------------------------------------------------------------- */
++class A01CoreGPU : public IOService {
++	OSDeclareDefaultStructors(A01CoreGPU);
++public:
++	bool start(IOService *provider) APPLE_KEXT_OVERRIDE;
++};
++
++OSDefineMetaClassAndStructors(A01CoreGPU, IOService);
++
++bool
++A01CoreGPU::start(IOService *provider)
++{
++	if (a01core_gpu_mode() != 2 || !IOService::start(provider)) {
++		return false;
++	}
++	if (a01core_gpu_power_on() != 0) {
++		IOLog("A01CORE PVR: GE8100 did not power on, driver not started\n");
++		return false;
++	}
++	int e = a01pvr_driver_init();
++	if (e != 0) {
++		IOLog("A01CORE PVR: DDK driver init failed (%d)\n", e);
++		return false;
++	}
++	setProperty(kIOUserClientClassKey, "A01CoreGPUUserClient");
++	setProperty("GPU", "PowerVR GE8100 (BVNC 22.49.21.16), DDK 1.11");
++	registerService();
++	IOLog("A01CORE PVR: A01CoreGPU registered\n");
++	return true;
++}
++
++class A01CoreGPUUserClient : public IOUserClient {
++	OSDeclareDefaultStructors(A01CoreGPUUserClient);
++	void *fConnection;
++	IOLock *fLock;
++public:
++	bool initWithTask(task_t owningTask, void *securityID, UInt32 type) APPLE_KEXT_OVERRIDE;
++	IOReturn clientClose(void) APPLE_KEXT_OVERRIDE;
++	void free(void) APPLE_KEXT_OVERRIDE;
++	IOReturn externalMethod(uint32_t selector, IOExternalMethodArguments *args,
++	    IOExternalMethodDispatch *dispatch, OSObject *target, void *reference) APPLE_KEXT_OVERRIDE;
++};
++
++OSDefineMetaClassAndStructors(A01CoreGPUUserClient, IOUserClient);
++
++bool
++A01CoreGPUUserClient::initWithTask(task_t owningTask, void *securityID, UInt32 type)
++{
++	if (!IOUserClient::initWithTask(owningTask, securityID, type)) {
++		return false;
++	}
++	fLock = IOLockAlloc();
++	/* runs in the opener's context: the DDK records its PID for the connection */
++	int e = a01pvr_open(&fConnection);
++	if (e != 0) {
++		IOLog("A01CORE PVR: open failed (%d)\n", e);
++	}
++	return fLock != NULL && e == 0;
++}
++
++IOReturn
++A01CoreGPUUserClient::clientClose(void)
++{
++	terminate();
++	return kIOReturnSuccess;
++}
++
++void
++A01CoreGPUUserClient::free(void)
++{
++	if (fConnection != NULL) {
++		a01pvr_close(fConnection);
++		fConnection = NULL;
++	}
++	if (fLock != NULL) {
++		IOLockFree(fLock);
++		fLock = NULL;
++	}
++	IOUserClient::free();
++}
++
++IOReturn
++A01CoreGPUUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments *args,
++    __unused IOExternalMethodDispatch *dispatch, __unused OSObject *target, __unused void *reference)
++{
++	switch (selector) {
++	case 0:
++		if (args->scalarInputCount != 6 || args->scalarOutputCount != 1) {
++			return kIOReturnBadArgument;
++		}
++		/* bridge calls run in the caller's thread: copyin/copyout use its address space */
++		args->scalarOutput[0] = (uint64_t)(uint32_t)a01pvr_bridge(fConnection,
++		    (uint32_t)args->scalarInput[0], (uint32_t)args->scalarInput[1],
++		    args->scalarInput[2], (uint32_t)args->scalarInput[3],
++		    args->scalarInput[4], (uint32_t)args->scalarInput[5]);
++		return kIOReturnSuccess;
++	case 1: {
++		if (args->scalarInputCount != 1 || args->scalarOutputCount != 2) {
++			return kIOReturnBadArgument;
++		}
++		uint64_t uaddr = 0;
++		IOLockLock(fLock);
++		args->scalarOutput[0] = (uint64_t)(uint32_t)a01pvr_mmap(fConnection, args->scalarInput[0], &uaddr);
++		IOLockUnlock(fLock);
++		args->scalarOutput[1] = uaddr;
++		return kIOReturnSuccess;
++	}
++	default:
++		return kIOReturnUnsupported;
++	}
++}
++#endif /* ARM64_BOARD_CONFIG_A01CORE */
+diff --git a/iokit/KernelConfigTables.cpp b/iokit/KernelConfigTables.cpp
+index f9e66c6..6e289dd 100644
+--- a/iokit/KernelConfigTables.cpp
++++ b/iokit/KernelConfigTables.cpp
+@@ -96,6 +96,13 @@ const char * gIOKernelConfigTables =
+     "     'IOMatchCategory' = SweetBattery;"
+     "   },"
+ #endif
++#if defined(ARM64_BOARD_CONFIG_A01CORE)
++    "   {"
++    "     'IOClass'         = A01CoreGPU;"
++    "     'IOProviderClass' = IOResources;"
++    "     'IOMatchCategory' = A01CoreGPU;"
++    "   },"
++#endif
+ #if defined(ARM64_BOARD_CONFIG_HEROLTE)
+     "   {"
+     "     'IOClass'         = HeroGPU;"
+diff --git a/iokit/conf/files.arm64 b/iokit/conf/files.arm64
+index 4e56d3d..cd148f7 100644
+--- a/iokit/conf/files.arm64
++++ b/iokit/conf/files.arm64
+@@ -18,6 +18,7 @@ iokit/Kernel/arm/SweetFramebuffer.cpp                            optional iokitc
+ iokit/Kernel/arm/A5XELTEGPU.cpp                                 optional iokitcpp
+ iokit/Kernel/arm/SweetBattery.cpp                                optional iokitcpp
+ iokit/Kernel/arm/HeroGPU.cpp                                     optional iokitcpp
++iokit/Kernel/arm/A01CoreGPU.cpp                                  optional iokitcpp
+ iokit/Kernel/arm/hid/SweetHID.cpp                                optional iokitcpp
+ iokit/Kernel/arm/hid/IOHIDEvent.cpp                              optional iokitcpp
+ iokit/Kernel/arm/hid/IOHIDEventServiceQueue.cpp                  optional iokitcpp
+-- 
+2.55.0.windows.5
+
