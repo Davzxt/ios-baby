@@ -510,12 +510,24 @@ int main(int argc, char **argv)
 			[bl endEncoding];
 			[cb commit];
 			[cb waitUntilCompleted];
-			const uint8_t *p = b.contents;
-			unsigned bad = 0;
+			const volatile uint8_t *p = b.contents, *pa = a.contents;
+			unsigned bad = 0, bad_a = 0;
 			for (unsigned i = 0; i < 4096; i++) bad += p[i] != 0x5a;
 			int ok = cb.status == MTLCommandBufferStatusCompleted && !bad;
 			report("TESTE 1 (copia de memoria): %s (status %ld, %u bytes errados%s%s)\n", ok ? "OK" : "ERRO",
 			       (long)cb.status, bad, cb.error ? ", " : "", cb.error ? cb.error.localizedDescription.UTF8String : "");
+			if (bad) {
+				/* which part failed: the fill of a (GPU never ran), the copy, or only the timing */
+				for (unsigned i = 0; i < 4096; i++) bad_a += pa[i] != 0x5a;
+				sleep(3);
+				unsigned bad_late = 0;
+				for (unsigned i = 0; i < 4096; i++) bad_late += p[i] != 0x5a;
+				void *drm1 = dlopen("/private/var/a01/lib/libdrm.2.dylib", RTLD_NOLOAD | RTLD_LAZY);
+				const char *(*first)(void) = drm1 ? (const char *(*)(void))dlsym(drm1, "a01drm_first_error") : NULL;
+				const char *fe = first ? first() : NULL;
+				report("  detalhe: origem com %u bytes errados (a[0]=%02x), destino b[0]=%02x; 3 s depois: %u errados; "
+				       "KERNEL: %s\n", bad_a, pa[0], p[0], bad_late, fe && fe[0] ? fe : "-");
+			}
 			failures += !ok;
 		}
 		pause_between();
