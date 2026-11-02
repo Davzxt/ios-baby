@@ -4538,7 +4538,15 @@ a01_ft_tail(void *pvDumpDebugFile, const IMG_CHAR *pszFormat, ...)
 	va_start(ap, pszFormat);
 	OSVSNPrintf(szLine, sizeof(szLine), pszFormat, ap);
 	va_end(ap);
-	a01_ft_real(pvDumpDebugFile, "%s", szLine);
+	/* as PVR_DUMPDEBUG_LOG: no printer means the kernel log */
+	if (a01_ft_real != NULL)
+	{
+		a01_ft_real(pvDumpDebugFile, "%s", szLine);
+	}
+	else
+	{
+		PVR_LOG(("%s", szLine));
+	}
 }
 
 static void
@@ -4548,11 +4556,13 @@ a01_dump_fw_trace_tail(DUMPDEBUG_PRINTF_FUNC *pfnDumpDebugPrintf, void *pvDumpDe
 	a01_ft_lines = 0;
 	RGXDumpFirmwareTrace(a01_ft_count, NULL, psDevInfo);
 	a01_ft_skip = (a01_ft_lines > A01_FWTRACE_TAIL) ? a01_ft_lines - A01_FWTRACE_TAIL : 0;
+	/* pfnDumpDebugPrintf may be NULL (the dump then goes to the kernel log): PVR_DUMPDEBUG_LOG
+	 * handles that, a direct call jumped to 0 (panic on the phone) */
 	a01_ft_real = pfnDumpDebugPrintf;
-	pfnDumpDebugPrintf(pvDumpDebugFile, "------[ A01: FW trace, last %u of %u lines ]------",
-	                   (a01_ft_lines > A01_FWTRACE_TAIL) ? A01_FWTRACE_TAIL : a01_ft_lines, a01_ft_lines);
+	PVR_DUMPDEBUG_LOG("------[ A01: FW trace, last %u of %u lines ]------",
+	                  (a01_ft_lines > A01_FWTRACE_TAIL) ? A01_FWTRACE_TAIL : a01_ft_lines, a01_ft_lines);
 	RGXDumpFirmwareTrace(a01_ft_tail, pvDumpDebugFile, psDevInfo);
-	pfnDumpDebugPrintf(pvDumpDebugFile, "------[ A01: FW trace END ]------");
+	PVR_DUMPDEBUG_LOG("------[ A01: FW trace END ]------");
 }
 
 
