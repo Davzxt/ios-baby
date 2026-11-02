@@ -42,6 +42,7 @@ static int g_console = -1;
  * where a run is stuck when it makes no more bridge calls. */
 static mach_port_t g_main_thread = MACH_PORT_NULL;
 static char g_where[420];
+static char g_code[64] = "?";   /* short "lib+offset" of the innermost GPU-stack frame, easy to type */
 
 static size_t
 where_frame(char *s, size_t room, uintptr_t a)
@@ -83,8 +84,18 @@ sample_main_thread(void)
 	thread_resume(g_main_thread);
 	char s[sizeof(g_where)];
 	size_t n = (size_t)snprintf(s, sizeof(s), "onde:");
+	int coded = 0;
 	for (int i = 0; i < na && n < sizeof(s) - 40; i++) {
-		n += where_frame(s + n, sizeof(s) - n, a[i]);
+		size_t k = where_frame(s + n, sizeof(s) - n, a[i]);
+		if (!coded && (strstr(s + n, "vulkan") || strstr(s + n, "A01Metal") || strstr(s + n, "drm"))) {
+			snprintf(g_code, sizeof(g_code), "%s", s + n + 1);   /* skip the leading space */
+			char *dot = strstr(g_code, ".dylib");
+			if (dot) {
+				memmove(dot, dot + 6, strlen(dot + 6) + 1);   /* libvulkan_powervr+0x1234 */
+			}
+			coded = 1;
+		}
+		n += k;
 	}
 	snprintf(s + n, sizeof(s) - n, "\n");
 	memcpy(g_where, s, sizeof(g_where));
@@ -175,7 +186,18 @@ watcher(void *arg)
 {
 	(void)arg;
 	const char *last_step = NULL;
+	time_t step_since = time(NULL);
 	for (unsigned t = 1;; t++) {
+		/* the line to read off the screen when it is stuck */
+		if (g_console >= 0 && A01MTLStep == last_step && time(NULL) - step_since >= 30 && t % 10 == 0) {
+			char s[200];
+			int n = snprintf(s, sizeof(s), "A01METAL: >>> TRAVADO em \"%s\" ha %ld s. CODIGO: %s <<<\n", A01MTLStep,
+			                 (long)(time(NULL) - step_since), g_code);
+			console_write(s, n > 0 ? (size_t)MIN((size_t)n, sizeof(s) - 1) : 0);
+		}
+		if (A01MTLStep != last_step) {
+			step_since = time(NULL);
+		}
 		sleep(1);
 		if (t % 5 == 0) {
 			sample_main_thread();
@@ -239,6 +261,7 @@ crash_handler(int sig, siginfo_t *si, void *ctx)
 	}
 	int locked = pthread_mutex_trylock(&g_mx) == 0;
 	size_t bt0 = g_len;
+	int coded = 0;
 	void *frames[10];
 	int n = backtrace(frames, 10);
 	for (int i = 2; i < n && g_len < sizeof(g_log) - 80; i++) {   /* skip this handler and the trampoline */
@@ -251,11 +274,19 @@ crash_handler(int sig, siginfo_t *si, void *ctx)
 			sym = di.dli_sname ? di.dli_sname : "?";
 		}
 		g_len += (size_t)snprintf(g_log + g_len, sizeof(g_log) - g_len, " %s+0x%lx %s\n", lib, off, sym);
+		/* the crashing GPU-stack frame becomes the code to type */
+		if (!coded && (strstr(lib, "vulkan") || strstr(lib, "A01Metal") || strstr(lib, "drm"))) {
+			const char *dot = strstr(lib, ".dylib");
+			int len = dot ? (int)(dot - lib) : (int)strlen(lib);
+			snprintf(g_code, sizeof(g_code), "%.*s+0x%lx", len, lib, off);
+			coded = 1;
+		}
 	}
 	snapshot(state, 1);
-	console_write("A01METAL: ", 10);
-	console_write(state, strlen(state));
-	console_write("\n", 1);
+	char line[300];
+	int ln = snprintf(line, sizeof(line), "A01METAL: >>> RESULTADO: FALHOU - %s em \"%s\". CODIGO: %s <<<\n", state,
+	                  A01MTLStep, g_code);
+	console_write(line, ln > 0 ? (size_t)MIN((size_t)ln, sizeof(line) - 1) : 0);
 	console_write(g_log + bt0, g_len - bt0);   /* the backtrace */
 	(void)locked;
 	_exit(100 + sig);
@@ -360,6 +391,7 @@ int main(int argc, char **argv)
 		id<MTLDevice> dev = A01MTLCreateSystemDefaultDevice();
 		if (!dev) {
 			report("ERRO: sem dispositivo Metal: %s\n", A01MTLLastError().UTF8String);
+			report("A01METAL: >>> RESULTADO: FALHOU ao criar a GPU (%s) <<<\n", A01MTLLastError().UTF8String);
 			g_state = "fim com ERRO";
 			snapshot(g_state, 0);
 			clear_reports();
@@ -487,6 +519,11 @@ int main(int argc, char **argv)
 		alarm(0);
 		g_state = failures ? "fim com ERRO" : "fim OK";
 		report("=== resultado: %d de 3 testes com ERRO ===\n", failures);
+		if (failures == 0) {
+			report("A01METAL: >>> RESULTADO: FUNCIONOU (3 de 3 testes OK) <<<\n");
+		} else {
+			report("A01METAL: >>> RESULTADO: FALHOU (%d de 3 testes com ERRO, veja as linhas TESTE acima) <<<\n", failures);
+		}
 		clear_reports();
 		return failures;
 	}
