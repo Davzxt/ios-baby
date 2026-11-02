@@ -1,0 +1,49 @@
+name: metal-research
+
+# How iOS 16's Metal.framework finds its GPU driver (for the A01 Core's own Metal driver).
+# Reads the iPhone X (D22AP) 16.7.16 dyld shared cache with blacktop/ipsw and prints only
+# strings and symbol names around driver discovery. No Apple binary is stored or uploaded.
+
+on:
+  workflow_dispatch:
+    inputs:
+      device:
+        default: "iPhone10,3"
+      version:
+        default: "16.7.16"
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Install ipsw
+        run: |
+          set -e
+          tag=$(curl -sf https://api.github.com/repos/blacktop/ipsw/releases/latest | python3 -c "import sys,json;print(json.load(sys.stdin)['tag_name'])")
+          ver=${tag#v}
+          curl -sfL -o ipsw.tgz "https://github.com/blacktop/ipsw/releases/download/$tag/ipsw_${ver}_linux_x86_64.tar.gz"
+          tar xzf ipsw.tgz ipsw && sudo mv ipsw /usr/local/bin/ && ipsw version
+      - name: Extract the dyld shared cache (remote)
+        run: |
+          mkdir -p dsc && cd dsc
+          ipsw download ipsw --device "${{ inputs.device }}" --version "${{ inputs.version }}" --dyld -y \
+            || { ipsw download ipsw --help | head -80; exit 1; }
+          find . -name 'dyld_shared_cache_arm64*' | head
+      - name: Metal driver discovery
+        run: |
+          set +e
+          DSC=$(find dsc -name 'dyld_shared_cache_arm64' -o -name 'dyld_shared_cache_arm64e' | grep -v '\.' | head -1)
+          [ -z "$DSC" ] && DSC=$(find dsc -name 'dyld_shared_cache_arm64*' | grep -v '\.[0-9]' | head -1)
+          echo "DSC: $DSC"
+          for s in MetalPluginName MetalPluginClassName MetalStatisticsName IOGLESBundleName AGXMetal \
+                   /System/Library/Extensions IOAcceleratorES IOGPU IOAccelerator AGXPrincipalDevice \
+                   MTLCopyAllDevices MTLCreateSystemDefaultDevice IOGPUDeviceCreate MTLDeviceClass; do
+            echo "=== str: $s"; ipsw dyld str "$DSC" "$s" 2>&1 | head -25
+          done
+          for img in Metal IOGPU QuartzCore; do
+            echo "=== $img strings (driver/plugin related)"
+            ipsw dyld macho "$DSC" "$img" --strings 2>&1 | grep -iE 'plugin|bundle|extension|agx|accel|iogpu|principal|registry|device' | head -120
+            echo "=== $img symbols (device creation)"
+            ipsw dyld macho "$DSC" "$img" --symbols 2>&1 | grep -iE 'CreateSystemDefaultDevice|CopyAllDevices|Plugin|Bundle|IOGPUDevice|AcceleratorES|DeviceCreate' | head -80
+          done
