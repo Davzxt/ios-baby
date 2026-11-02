@@ -77,9 +77,9 @@ snapshot(const char *state, int locked)
 }
 
 static void
-out(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+report(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static void
-out(const char *fmt, ...)
+report(const char *fmt, ...)
 {
 	va_list ap;
 	va_start(ap, fmt);
@@ -117,7 +117,7 @@ stderr_reader(void *arg)
 		}
 		if (c == '\n') {
 			line[len] = '\0';
-			out("%s", line);
+			report("%s", line);
 			len = 0;
 		}
 	}
@@ -201,15 +201,15 @@ int main(void)
 {
 	@autoreleasepool {
 		install_diagnostics();
-		out("=== A01Metal: testes da GPU (Metal -> Vulkan -> DDK -> GE8100) ===\n");
+		report("=== A01Metal: testes da GPU (Metal -> Vulkan -> DDK -> GE8100) ===\n");
 		id<MTLDevice> dev = A01MTLCreateSystemDefaultDevice();
 		if (!dev) {
-			out("ERRO: sem dispositivo Metal: %s\n", A01MTLLastError().UTF8String);
+			report("ERRO: sem dispositivo Metal: %s\n", A01MTLLastError().UTF8String);
 			g_state = "fim com ERRO";
 			snapshot(g_state, 0);
 			return 1;
 		}
-		out("dispositivo: %s\n", dev.name.UTF8String);
+		report("dispositivo: %s\n", dev.name.UTF8String);
 		id<MTLCommandQueue> q = [dev newCommandQueue];
 		int failures = 0;
 
@@ -231,7 +231,7 @@ int main(void)
 			unsigned bad = 0;
 			for (unsigned i = 0; i < 4096; i++) bad += p[i] != 0x5a;
 			int ok = cb.status == MTLCommandBufferStatusCompleted && !bad;
-			out("TESTE 1 (copia de memoria): %s (status %ld, %u bytes errados%s%s)\n", ok ? "OK" : "ERRO",
+			report("TESTE 1 (copia de memoria): %s (status %ld, %u bytes errados%s%s)\n", ok ? "OK" : "ERRO",
 			       (long)cb.status, bad, cb.error ? ", " : "", cb.error ? cb.error.localizedDescription.UTF8String : "");
 			failures += !ok;
 		}
@@ -247,7 +247,7 @@ int main(void)
 			id<MTLTexture> t = [dev newTextureWithDescriptor:td];
 			id<MTLBuffer> out = [dev newBufferWithLength:64 * 64 * 4 options:MTLResourceStorageModeShared];
 			if (!t || !out) {
-				out("TESTE 2 (textura + render pass): ERRO (textura ou buffer nao criados)\n");
+				report("TESTE 2 (textura + render pass): ERRO (textura ou buffer nao criados)\n");
 				failures++;
 			} else {
 				memset(out.contents, 0, 64 * 64 * 4);
@@ -259,7 +259,7 @@ int main(void)
 				id<MTLCommandBuffer> cb = [q commandBuffer];
 				id<MTLRenderCommandEncoder> re = [cb renderCommandEncoderWithDescriptor:rp];
 				if (!re) {
-					out("TESTE 2 (textura + render pass): ERRO (%s)\n", cb.error.localizedDescription.UTF8String);
+					report("TESTE 2 (textura + render pass): ERRO (%s)\n", cb.error.localizedDescription.UTF8String);
 					failures++;
 				} else {
 					[re endEncoding];
@@ -273,7 +273,7 @@ int main(void)
 					unsigned bad;
 					int ok = cb.status == MTLCommandBufferStatusCompleted && check_pixels(out, 64, 64, 255, 0, 0, 255, &bad);
 					const uint8_t *p = out.contents;
-					out("TESTE 2 (textura + render pass): %s (status %ld, %u pixels errados, pixel 0 = %u,%u,%u,%u)\n",
+					report("TESTE 2 (textura + render pass): %s (status %ld, %u pixels errados, pixel 0 = %u,%u,%u,%u)\n",
 					       ok ? "OK" : "ERRO", (long)cb.status, bad, p[0], p[1], p[2], p[3]);
 					failures += !ok;
 				}
@@ -298,7 +298,7 @@ int main(void)
 			id<MTLTexture> t = [dev newTextureWithDescriptor:td];
 			id<MTLBuffer> out = [dev newBufferWithLength:64 * 64 * 4 options:MTLResourceStorageModeShared];
 			if (!ps || !t || !out) {
-				out("TESTE 3 (shader simples): ERRO (%s)\n", e ? e.localizedDescription.UTF8String : "textura ou buffer nao criados");
+				report("TESTE 3 (shader simples): ERRO (%s)\n", e ? e.localizedDescription.UTF8String : "textura ou buffer nao criados");
 				failures++;
 			} else {
 				memset(out.contents, 0, 64 * 64 * 4);
@@ -322,7 +322,7 @@ int main(void)
 				unsigned bad;
 				int ok = cb.status == MTLCommandBufferStatusCompleted && check_pixels(out, 64, 64, 0, 255, 0, 255, &bad);
 				const uint8_t *p = out.contents;
-				out("TESTE 3 (shader simples): %s (status %ld, %u pixels errados, pixel central = %u,%u,%u,%u)\n",
+				report("TESTE 3 (shader simples): %s (status %ld, %u pixels errados, pixel central = %u,%u,%u,%u)\n",
 				       ok ? "OK" : "ERRO", (long)cb.status, bad, p[4 * (32 * 64 + 32)], p[4 * (32 * 64 + 32) + 1],
 				       p[4 * (32 * 64 + 32) + 2], p[4 * (32 * 64 + 32) + 3]);
 				failures += !ok;
@@ -330,7 +330,7 @@ int main(void)
 		}
 		alarm(0);
 		g_state = failures ? "fim com ERRO" : "fim OK";
-		out("=== resultado: %d de 3 testes com ERRO ===\n", failures);
+		report("=== resultado: %d de 3 testes com ERRO ===\n", failures);
 		return failures;
 	}
 }
