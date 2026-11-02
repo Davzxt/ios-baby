@@ -15,6 +15,10 @@
 #include <time.h>
 #include <mach/mach.h>
 #include <sys/param.h>
+#include <sys/stat.h>
+#include <sys/sysctl.h>
+#include <sys/time.h>
+#include <fcntl.h>
 #include "tri_spv.h"   /* tri_vert_spv / tri_frag_spv, built from tri.vert / tri.frag */
 
 /* ---- diagnostics ----
@@ -31,6 +35,17 @@ static pthread_mutex_t g_mx = PTHREAD_MUTEX_INITIALIZER;
 static int g_out = STDOUT_FILENO;
 static time_t g_t0;
 static const char *volatile g_state = "rodando";
+/* Live mode (boot without a5fb_noconsole, the GPU_DIAG package): the kernel text console stays on
+ * screen, so every line also goes to /dev/console and the result is read in the same boot. */
+static int g_console = -1;
+
+static void
+console_write(const char *s, size_t n)
+{
+	if (g_console >= 0 && n > 0) {
+		write(g_console, s, n);
+	}
+}
 
 static size_t
 footprint_kb(void)
@@ -89,9 +104,15 @@ report(const char *fmt, ...)
 	va_list ap;
 	va_start(ap, fmt);
 	pthread_mutex_lock(&g_mx);
-	if (g_len < sizeof(g_log) - 1) {
-		int k = vsnprintf(g_log + g_len, sizeof(g_log) - g_len, fmt, ap);
-		g_len = k < 0 ? g_len : MIN(g_len + (size_t)k, sizeof(g_log) - 1);
+	char line[512];
+	int k = vsnprintf(line, sizeof(line), fmt, ap);
+	size_t len = k < 0 ? 0 : MIN((size_t)k, sizeof(line) - 1);
+	console_write(line, len);
+	if (len > 0 && g_len < sizeof(g_log) - 1) {
+		size_t room = sizeof(g_log) - 1 - g_len;
+		memcpy(g_log + g_len, line, MIN(len, room));
+		g_len += MIN(len, room);
+		g_log[g_len] = '\0';
 	}
 	snapshot(g_state, 1);
 	pthread_mutex_unlock(&g_mx);
@@ -102,9 +123,31 @@ static void *
 watcher(void *arg)
 {
 	(void)arg;
-	for (;;) {
+	const char *last_step = NULL;
+	for (unsigned t = 1;; t++) {
 		sleep(1);
 		snapshot(g_state, 0);
+		/* live mode: the step whenever it changes, and the bridge calls every 10 s while stuck */
+		if (g_console >= 0 && (A01MTLStep != last_step || t % 10 == 0)) {
+			char s[200];
+			int n = snprintf(s, sizeof(s), "A01METAL: [%s | etapa: %s | %ld s | mem %zu KB]\n", g_state, A01MTLStep,
+			                 (long)(time(NULL) - g_t0), footprint_kb());
+			console_write(s, n > 0 ? (size_t)MIN((size_t)n, sizeof(s) - 1) : 0);
+			if (A01MTLStep == last_step) {
+				void *drm = dlopen("/private/var/a01/lib/libdrm.2.dylib", RTLD_NOLOAD | RTLD_LAZY);
+				void (*dump)(FILE *) = drm ? (void (*)(FILE *))dlsym(drm, "a01drm_trace_dump") : NULL;
+				char d[600];
+				FILE *f = dump ? fmemopen(d, sizeof(d), "w") : NULL;
+				if (f) {
+					dump(f);
+					fflush(f);
+					size_t dn = (size_t)ftell(f);
+					fclose(f);
+					console_write(d, MIN(dn, sizeof(d) - 1));
+				}
+			}
+			last_step = A01MTLStep;
+		}
 	}
 	return NULL;
 }
@@ -140,6 +183,7 @@ crash_handler(int sig, siginfo_t *si, void *ctx)
 		snprintf(state, sizeof(state), "ERRO: CAIU sinal %d (%s) end %p", sig, strsignal(sig), si ? si->si_addr : NULL);
 	}
 	int locked = pthread_mutex_trylock(&g_mx) == 0;
+	size_t bt0 = g_len;
 	void *frames[10];
 	int n = backtrace(frames, 10);
 	for (int i = 2; i < n && g_len < sizeof(g_log) - 80; i++) {   /* skip this handler and the trampoline */
@@ -154,14 +198,49 @@ crash_handler(int sig, siginfo_t *si, void *ctx)
 		g_len += (size_t)snprintf(g_log + g_len, sizeof(g_log) - g_len, " %s+0x%lx %s\n", lib, off, sym);
 	}
 	snapshot(state, 1);
+	console_write("A01METAL: ", 10);
+	console_write(state, strlen(state));
+	console_write("\n", 1);
+	console_write(g_log + bt0, g_len - bt0);   /* the backtrace */
 	(void)locked;
 	_exit(100 + sig);
+}
+
+/* One boot instead of two: launchd may start this job before the kernel has finished installing
+ * a new A01 drop (the drop writes /private/var/a01/drop.txt last). Wait for that, and when this
+ * binary was replaced during this boot, run the new one in place of this one. */
+static void
+wait_for_install(char **argv)
+{
+	struct timeval boot;
+	size_t bl = sizeof(boot);
+	if (getenv("A01_REEXEC") != NULL || sysctlbyname("kern.boottime", &boot, &bl, NULL, 0) != 0) {
+		return;
+	}
+	for (int i = 0; i < 30; i++) {   /* up to 15 s; nothing is installed on most boots */
+		struct stat d;
+		if (stat("/private/var/a01/drop.txt", &d) == 0 && d.st_mtime >= boot.tv_sec) {
+			struct stat self;
+			sleep(1);   /* let the last file land */
+			if (stat(argv[0], &self) == 0 && self.st_mtime >= boot.tv_sec) {
+				setenv("A01_REEXEC", "1", 1);
+				execv(argv[0], argv);
+			}
+			return;
+		}
+		usleep(500000);
+	}
 }
 
 static void
 install_diagnostics(void)
 {
 	g_t0 = time(NULL);
+	char args[1024] = "";
+	size_t al = sizeof(args) - 1;
+	if (sysctlbyname("kern.bootargs", args, &al, NULL, 0) == 0 && strstr(args, "a5fb_noconsole=1") == NULL) {
+		g_console = open("/dev/console", O_WRONLY | O_NOCTTY);
+	}
 	ftruncate(g_out, 0);   /* once: drop earlier runs; every later write is in place + fsync */
 	int p[2];
 	if (pipe(p) == 0) {
@@ -203,9 +282,23 @@ pause_between(void)
 	sleep(3);
 }
 
-int main(void)
+/* live mode: the result was on screen in this boot, so the next boot has nothing to report and
+ * skips the kernel's 15 s report pause */
+static void
+clear_reports(void)
 {
+	if (g_console >= 0) {
+		sleep(20);   /* time to read / photograph the result */
+		unlink("/private/var/herolte/autorun.out");
+		unlink("/private/var/a01/drop.txt");
+	}
+}
+
+int main(int argc, char **argv)
+{
+	(void)argc;
 	@autoreleasepool {
+		wait_for_install(argv);
 		install_diagnostics();
 		report("=== A01Metal: testes da GPU (Metal -> Vulkan -> DDK -> GE8100) ===\n");
 		id<MTLDevice> dev = A01MTLCreateSystemDefaultDevice();
@@ -213,6 +306,7 @@ int main(void)
 			report("ERRO: sem dispositivo Metal: %s\n", A01MTLLastError().UTF8String);
 			g_state = "fim com ERRO";
 			snapshot(g_state, 0);
+			clear_reports();
 			return 1;
 		}
 		report("dispositivo: %s\n", dev.name.UTF8String);
@@ -337,6 +431,7 @@ int main(void)
 		alarm(0);
 		g_state = failures ? "fim com ERRO" : "fim OK";
 		report("=== resultado: %d de 3 testes com ERRO ===\n", failures);
+		clear_reports();
 		return failures;
 	}
 }
