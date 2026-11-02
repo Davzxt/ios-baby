@@ -132,3 +132,10 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 - **2026-11-02 MILESTONE (photo): the full DDK 1.11 driver runs on the GE8100 under XNU.** "PVR: Read BVNC 22.49.21.16 from HW device registers", "RGX Device registered", "DDK 1.11 driver init: PVRSRV_OK", "A01CoreGPU registered", "RGX Firmware image rgx.fw.22.49.21.16 loaded", "device initialise (firmware boot): PVRSRV_OK", "self-test: open OK, GPU initialised by the DDK". iOS kept booting afterwards. Fixes that got here: OSMMapPMR (kernel PMR mapping), process stats init, uncached firmware-shared memory (0323).
 - 2026-11-02 packages from CI xnu 41444249265 (0319-0325), a01vulkan 41444249019 (GE8100 loads without env), a01metal 41445988249 (A01MTLDevice runtime subclass of _MTLDevice, A01Metal.bundle): AP_IOS16_BOOT_1GB_RAM_GPU_DDK (a01gpu=2) and AP_IOS16_BOOT_1GB_RAM_GPU_METAL_UI (a01gpu=2 a01metal=1). Drop: 9 entries incl. /System/Library/Extensions/A01Metal.bundle. Not run yet.
 - 2026-11-02 user: boot 2 showed drop.txt (written) + autorun.txt none yet; boot 3 had no result. iOS launchd reads jobs from /System/Library/xpc/launchd.plist, not the LaunchDaemons folder: the dropped plist was never loaded. The A01 root (herolte-tune-ios-root.sh) already registers com.herolte.autorun -> /private/var/herolte/autorun, output /private/var/herolte/autorun.out. 0326: the drop may write that path and the boot report prints autorun.out.
+
+## 2026-11-02 — 0327 packages (3 GPU tests, faster boot)
+
+- Build: xnu run 41449545122 success, a01metal run 41449545030 success, Vulkan 41444249019 (commit 976b887).
+- Drop (9 entries): A01Metal.bundle, libvulkan_powervr, libdrm, libA01Metal, `/private/var/herolte/autorun` = a01metal-test (TESTE 1 copy, TESTE 2 texture+render pass, TESTE 3 SPIR-V triangle).
+- Packages: GPU_DDK md5 1d8096efd1e27277e6ed2fb4a9f3ab51, GPU_METAL_UI md5 2837d08e8e4fb360ecfc2af8a984f9a6 (Odin trailer verified).
+- Not yet run on device: no test result recorded yet.
