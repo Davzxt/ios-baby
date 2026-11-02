@@ -38,6 +38,57 @@ static const char *volatile g_state = "rodando";
 /* Live mode (boot without a5fb_noconsole, the GPU_DIAG package): the kernel text console stays on
  * screen, so every line also goes to /dev/console and the result is read in the same boot. */
 static int g_console = -1;
+/* Where the main thread is, sampled by the watcher (pc, lr and the frame-pointer chain): shows
+ * where a run is stuck when it makes no more bridge calls. */
+static mach_port_t g_main_thread = MACH_PORT_NULL;
+static char g_where[420];
+
+static size_t
+where_frame(char *s, size_t room, uintptr_t a)
+{
+	Dl_info di;
+	if (a != 0 && dladdr((void *)a, &di) && di.dli_fname) {
+		const char *lib = strrchr(di.dli_fname, '/') ? strrchr(di.dli_fname, '/') + 1 : di.dli_fname;
+		int n = snprintf(s, room, " %s+0x%lx", lib, (unsigned long)(a - (uintptr_t)di.dli_fbase));
+		return n < 0 ? 0 : MIN((size_t)n, room - 1);
+	}
+	int n = snprintf(s, room, " %#lx", (unsigned long)a);
+	return n < 0 ? 0 : MIN((size_t)n, room - 1);
+}
+
+static void
+sample_main_thread(void)
+{
+	if (g_main_thread == MACH_PORT_NULL || thread_suspend(g_main_thread) != KERN_SUCCESS) {
+		return;
+	}
+	/* only raw addresses while it is suspended: it may hold dyld's or malloc's lock */
+	uintptr_t a[8];
+	int na = 0;
+	arm_thread_state64_t ts;
+	mach_msg_type_number_t cnt = ARM_THREAD_STATE64_COUNT;
+	if (thread_get_state(g_main_thread, ARM_THREAD_STATE64, (thread_state_t)&ts, &cnt) == KERN_SUCCESS) {
+		a[na++] = (uintptr_t)arm_thread_state64_get_pc(ts);
+		a[na++] = (uintptr_t)arm_thread_state64_get_lr(ts);
+		uintptr_t fp = (uintptr_t)arm_thread_state64_get_fp(ts);
+		while (na < 8 && fp != 0 && (fp & 7) == 0) {
+			const uintptr_t *f = (const uintptr_t *)fp;   /* {previous fp, return address} */
+			a[na++] = f[1];
+			if (f[0] <= fp) {
+				break;
+			}
+			fp = f[0];
+		}
+	}
+	thread_resume(g_main_thread);
+	char s[sizeof(g_where)];
+	size_t n = (size_t)snprintf(s, sizeof(s), "onde:");
+	for (int i = 0; i < na && n < sizeof(s) - 40; i++) {
+		n += where_frame(s + n, sizeof(s) - n, a[i]);
+	}
+	snprintf(s + n, sizeof(s) - n, "\n");
+	memcpy(g_where, s, sizeof(g_where));
+}
 
 static void
 console_write(const char *s, size_t n)
@@ -67,8 +118,8 @@ snapshot(const char *state, int locked)
 		pthread_mutex_lock(&g_mx);
 	}
 	/* status first: the boot report shows only the first ~1 KB */
-	n += (size_t)snprintf(buf + n, sizeof(buf) - n, "[%s | etapa: %s | %ld s | mem %zu KB]\n", state, A01MTLStep,
-	                      (long)(time(NULL) - g_t0), footprint_kb());
+	n += (size_t)snprintf(buf + n, sizeof(buf) - n, "[%s | etapa: %s | %ld s | mem %zu KB]\n%s", state, A01MTLStep,
+	                      (long)(time(NULL) - g_t0), footprint_kb(), g_where);
 	void *drm = dlopen("/private/var/a01/lib/libdrm.2.dylib", RTLD_NOLOAD | RTLD_LAZY);
 	void (*dump)(FILE *) = drm ? (void (*)(FILE *))dlsym(drm, "a01drm_trace_dump") : NULL;
 	if (dump && n < sizeof(buf) - 1) {
@@ -126,6 +177,9 @@ watcher(void *arg)
 	const char *last_step = NULL;
 	for (unsigned t = 1;; t++) {
 		sleep(1);
+		if (t % 5 == 0) {
+			sample_main_thread();
+		}
 		snapshot(g_state, 0);
 		/* live mode: the step whenever it changes, and the bridge calls every 10 s while stuck */
 		if (g_console >= 0 && (A01MTLStep != last_step || t % 10 == 0)) {
@@ -134,6 +188,7 @@ watcher(void *arg)
 			                 (long)(time(NULL) - g_t0), footprint_kb());
 			console_write(s, n > 0 ? (size_t)MIN((size_t)n, sizeof(s) - 1) : 0);
 			if (A01MTLStep == last_step) {
+				console_write(g_where, strnlen(g_where, sizeof(g_where)));
 				void *drm = dlopen("/private/var/a01/lib/libdrm.2.dylib", RTLD_NOLOAD | RTLD_LAZY);
 				void (*dump)(FILE *) = drm ? (void (*)(FILE *))dlsym(drm, "a01drm_trace_dump") : NULL;
 				char d[600];
@@ -299,6 +354,7 @@ int main(int argc, char **argv)
 	(void)argc;
 	@autoreleasepool {
 		wait_for_install(argv);
+		g_main_thread = mach_thread_self();
 		install_diagnostics();
 		report("=== A01Metal: testes da GPU (Metal -> Vulkan -> DDK -> GE8100) ===\n");
 		id<MTLDevice> dev = A01MTLCreateSystemDefaultDevice();
