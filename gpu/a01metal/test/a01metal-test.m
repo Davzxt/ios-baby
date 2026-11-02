@@ -122,12 +122,14 @@ console_write(const char *s, size_t n)
 static size_t
 footprint_kb(void)
 {
-	task_vm_info_data_t vi;
-	mach_msg_type_number_t n = TASK_VM_INFO_COUNT;
-	if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vi, &n) != KERN_SUCCESS) {
+	/* MACH_TASK_BASIC_INFO: TASK_VM_INFO's count from the 18.5 SDK is larger than this kernel's,
+	 * which logged a warning on the console every second */
+	mach_task_basic_info_data_t bi;
+	mach_msg_type_number_t n = MACH_TASK_BASIC_INFO_COUNT;
+	if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO, (task_info_t)&bi, &n) != KERN_SUCCESS) {
 		return 0;
 	}
-	return (size_t)(vi.phys_footprint / 1024);
+	return (size_t)(bi.resident_size / 1024);
 }
 
 static void
