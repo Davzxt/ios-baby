@@ -150,7 +150,7 @@ PhysmemNewOSRamBackedPMR(PVRSRV_DEVICE_NODE *psDevNode, IMG_DEVMEM_SIZE_T uiSize
 	}
 	m->size = uiSize;
 	m->flags = uiFlags;
-	m->buf = a01gpu_buf_alloc(uiSize, IMG_FALSE);
+	m->buf = a01gpu_buf_alloc(uiSize, IMG_FALSE, a01_cache_mode(uiFlags));
 	if (!m->buf) {
 		OSFreeMem(m);
 		return PVRSRV_ERROR_OUT_OF_MEMORY;
@@ -226,7 +226,7 @@ OSPhyContigPagesAlloc(PVRSRV_DEVICE_NODE *psDevNode, size_t uiSize, PG_HANDLE *p
     IMG_DEV_PHYADDR *psDevPAddr)
 {
 	(void)psDevNode;
-	a01gpu_buf *b = a01gpu_buf_alloc(uiSize, IMG_TRUE);
+	a01gpu_buf *b = a01gpu_buf_alloc(uiSize, IMG_TRUE, A01GPU_CACHED);   /* MMU tables: cached + OSPhyContigPagesClean */
 	if (!b) {
 		return PVRSRV_ERROR_OUT_OF_MEMORY;
 	}

@@ -10,8 +10,9 @@ typedef struct a01gpu_buf a01gpu_buf;
 
 enum { A01GPU_CACHED = 0, A01GPU_UNCACHED = 1, A01GPU_WRITE_COMBINE = 2 };
 
-/* size rounded up to pages; contiguous != 0 asks for one physical run */
-a01gpu_buf *a01gpu_buf_alloc(uint64_t size, int contiguous);
+/* size rounded up to pages; contiguous != 0 asks for one physical run; cache_mode (A01GPU_*) is
+ * the kernel mapping's: firmware-shared memory must be uncached or the CPU reads stale lines */
+a01gpu_buf *a01gpu_buf_alloc(uint64_t size, int contiguous, int cache_mode);
 void a01gpu_buf_free(a01gpu_buf *b);
 void *a01gpu_buf_kva(a01gpu_buf *b);                    /* cached kernel mapping */
 uint64_t a01gpu_buf_size(a01gpu_buf *b);
