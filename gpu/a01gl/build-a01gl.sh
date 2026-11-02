@@ -28,6 +28,15 @@ python3 "$HERE/../mesa/patch-mesa.py" mesa
 python3 "$HERE/patch-a01gl.py" mesa
 mkdir -p pc
 
+# Zink on Darwin insists on MoltenVK headers (meson: "moltenvk-dir is required"). Our Vulkan is the
+# native GE8100 driver, not MoltenVK: empty stand-ins leave MVK_VERSION undefined, so Zink compiles
+# its plain-Vulkan paths.
+mkdir -p moltenvk/include/MoltenVK
+echo '#include <vulkan/vulkan.h>' > moltenvk/include/MoltenVK/mvk_vulkan.h
+for h in mvk_config mvk_deprecated_api mvk_private_api; do
+  echo '/* A01: no MoltenVK; MVK_VERSION stays undefined */' > "moltenvk/include/MoltenVK/$h.h"
+done
+
 cat > ios-cross.txt <<EOF
 [binaries]
 c = ['xcrun', '--sdk', 'iphoneos', 'clang', '-arch', 'arm64']
@@ -62,7 +71,7 @@ EOF
 cd mesa
 [ -d build ] || meson setup build --cross-file ../ios-cross.txt \
   --buildtype=release -Db_ndebug=true -Dprefix=/ \
-  -Dgallium-drivers=softpipe,zink -Dvulkan-drivers= \
+  -Dgallium-drivers=softpipe,zink -Dvulkan-drivers= -Dmoltenvk-dir="$WORK/moltenvk" \
   -Dllvm=disabled -Dglx=disabled -Degl=disabled -Dgbm=disabled -Dplatforms= \
   -Dosmesa=true -Dopengl=true -Dgles1=disabled -Dgles2=enabled -Dshared-glapi=enabled \
   -Dshader-cache=disabled -Dvalgrind=disabled -Dlibunwind=disabled -Dzstd=disabled \
