@@ -1,0 +1,105 @@
+From 0856640e90392ef00178977bd3ba6e7b8dd1682a Mon Sep 17 00:00:00 2001
+From: a01core <a01core@localhost>
+Date: Mon, 2 Nov 2026 17:25:41 -0300
+Subject: [PATCH] 0330 a01core: EAGL bridge in backboardd (HEROLTE GL path;
+ boot-args herogl, a01gl=zink|softpipe)
+
+---
+ bsd/dev/herolte_gl.c  | 15 ++++++++++++++-
+ bsd/kern/kern_exec.c  |  9 +++++++--
+ bsd/kern/sweet_amfi.c |  4 ++--
+ 3 files changed, 23 insertions(+), 5 deletions(-)
+
+diff --git a/bsd/dev/herolte_gl.c b/bsd/dev/herolte_gl.c
+index c743b77..e33b474 100644
+--- a/bsd/dev/herolte_gl.c
++++ b/bsd/dev/herolte_gl.c
+@@ -13,7 +13,7 @@
+  * launches of a boot get it: if backboardd dies twice, the next one is
+  * stock, so a broken shim costs two restarts and no more.
+  */
+-#if defined(ARM64_BOARD_CONFIG_HEROLTE)
++#if defined(ARM64_BOARD_CONFIG_HEROLTE) || defined(ARM64_BOARD_CONFIG_A01CORE)
+ #include <sys/param.h>
+ #include <sys/systm.h>
+ #include <sys/vnode.h>
+@@ -25,7 +25,13 @@ int herolte_gl_env(const char *path, int pid, const char **extra, int max);
+ uint64_t herolte_gl_dyld_flags(void);
+ 
+ #define HGL_TARGET      "/usr/libexec/backboardd"
++#if defined(ARM64_BOARD_CONFIG_A01CORE)
++/* A01 Core: the HakiOS/Bergamota EAGL bridge over Mesa (OSMesa: softpipe, or Zink on the GE8100
++ * Vulkan driver with boot-arg a01gl=zink), installed by the A01 drop under /private/var/a01/lib. */
++#define HGL_SHIM        "/private/var/a01/lib/libheroeagl.dylib"
++#else
+ #define HGL_SHIM        "/private/var/herolte/lib/libheroeagl.dylib"
++#endif
+ #define HGL_MAX_LAUNCHES 2
+ #define HGL_SB_TARGET   "/System/Library/CoreServices/SpringBoard.app/SpringBoard"
+ #define HGL_SB_LIB      "/private/var/herolte/lib/libherosb.dylib"
+@@ -148,6 +154,13 @@ herolte_gl_env(const char *path, int pid, const char **extra, int max)
+ 	int n = 0;
+ 	extra[n++] = "DYLD_INSERT_LIBRARIES=" HGL_SHIM;
+ 	extra[n++] = "HERO_LOG_STDERR=1";
++#if defined(ARM64_BOARD_CONFIG_A01CORE)
++	{
++		char drv[16] = "";
++		PE_parse_boot_argn("a01gl", drv, sizeof(drv));
++		extra[n++] = (strcmp(drv, "zink") == 0) ? "GALLIUM_DRIVER=zink" : "GALLIUM_DRIVER=softpipe";
++	}
++#endif
+ 	if (hgl_mode >= 2) {
+ 		extra[n++] = "EAGL_SHIM_DEBUG=1";
+ 	}
+diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
+index 62f690d..cc416e9 100644
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -5751,15 +5751,20 @@ exec_extract_strings(struct image_params *imgp)
+ 		imgp->ip_envc++;
+ 	}
+ 
+-#if defined(ARM64_BOARD_CONFIG_HEROLTE)
++#if defined(ARM64_BOARD_CONFIG_HEROLTE) || defined(ARM64_BOARD_CONFIG_A01CORE)
+ 	/* bsd/dev/herolte_gl.c: the EAGL shim for backboardd (boot-arg herogl). */
+ 	{
+ 		extern int herolte_gl_env(const char *path, int pid, const char **extra, int max);
++#if defined(ARM64_BOARD_CONFIG_HEROLTE)
++#define HEROLTE_XPC_LOG 1
++#else
++#define HEROLTE_XPC_LOG 0   /* A01: no extra console line per xpcproxy */
++#endif
+ 		const char *extra[4];
+ 		const char *herolte_path = imgp->ip_strings + strlen(EXECUTABLE_KEY);
+ 		size_t herolte_len = strlen(herolte_path);
+ 		/* Which launchd job a xpcproxy is for: its second argument, to match with its EXIT line. */
+-		if (herolte_len >= 9 && strcmp(herolte_path + herolte_len - 9, "/xpcproxy") == 0 && imgp->ip_argc >= 2) {
++		if (HEROLTE_XPC_LOG && herolte_len >= 9 && strcmp(herolte_path + herolte_len - 9, "/xpcproxy") == 0 && imgp->ip_argc >= 2) {
+ 			printf("XPC[%d] %s\n", proc_getpid(vfs_context_proc(imgp->ip_vfs_context)),
+ 			    imgp->ip_startargv + strlen(imgp->ip_startargv) + 1);
+ 		}
+diff --git a/bsd/kern/sweet_amfi.c b/bsd/kern/sweet_amfi.c
+index 177cb1b..c703439 100644
+--- a/bsd/kern/sweet_amfi.c
++++ b/bsd/kern/sweet_amfi.c
+@@ -368,7 +368,7 @@ static struct mac_policy_conf sweet_amfi_mac_conf = {
+ 
+ static mac_policy_handle_t sweet_amfi_mac_handle;
+ 
+-#if defined(ARM64_BOARD_CONFIG_HEROLTE)
++#if defined(ARM64_BOARD_CONFIG_HEROLTE) || defined(ARM64_BOARD_CONFIG_A01CORE)
+ /*
+  * Policy "AMFI": dyld's amfi_check_dyld_policy_self() is
+  * __mac_syscall("AMFI", 90, &{ u64 input flags, u64 *output flags }).
+@@ -424,7 +424,7 @@ sweet_amfi_policy_register(void)
+ 	error = mac_policy_register(&sweet_sandbox_mac_conf, &sweet_sandbox_mac_handle, NULL);
+ 	printf("SWEET Sandbox: permissive policy %s (%d)\n",
+ 	    error ? "NOT registered" : "registered", error);
+-#if defined(ARM64_BOARD_CONFIG_HEROLTE)
++#if defined(ARM64_BOARD_CONFIG_HEROLTE) || defined(ARM64_BOARD_CONFIG_A01CORE)
+ 	error = mac_policy_register(&sweet_amfi_dyld_mac_conf, &sweet_amfi_dyld_mac_handle, NULL);
+ 	printf("SWEET AMFI: dyld policy %s (%d)\n", error ? "NOT registered" : "registered", error);
+ #endif
+-- 
+2.55.0.windows.5
+

@@ -1,0 +1,44 @@
+name: a01gl
+
+# Galaxy A01 Core: OpenGL ES for CoreAnimation, the HakiOS/Bergamota way: Mesa 25.0.7 OSMesa with
+# softpipe and Zink (over the GE8100 Vulkan driver), the minimal Vulkan loader and the EAGL shim
+# (gpu/a01gl/build-a01gl.sh). The artifact reaches the phone through the A01 drop. Nothing of Apple's.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [a01core]
+    paths:
+      - "gpu/a01gl/**"
+      - "gpu/mesa/patch-mesa.py"
+      - "gpu/mesa/osmesa_hero.inc"
+      - "gpu/eagl/**"
+      - ".github/workflows/a01gl.yml"
+
+jobs:
+  build:
+    runs-on: macos-15-intel
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deps
+        run: |
+          brew install meson ninja bison pkg-config || true
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install -q mako pyyaml packaging setuptools meson
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix bison)/bin" >> "$GITHUB_PATH"
+      - name: Build
+        run: |
+          set -o pipefail
+          bash gpu/a01gl/build-a01gl.sh "$RUNNER_TEMP/a01gl-work" out 2>&1 | tee build.log
+          shasum -a 256 out/lib/* | tee out/SHA256SUMS
+      - name: Report build errors as annotations
+        if: failure()
+        run: |
+          test -f build.log || exit 0
+          grep -E ":[0-9]+:[0-9]+: (fatal )?error:|^ld: |Undefined symbols|ERROR:|AssertionError|^FAILED:|meson.build:[0-9]+:[0-9]+:" build.log | sort -u | head -40 | while read -r l; do echo "::error::${l:0:400}"; done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: a01gl
+          path: out/
