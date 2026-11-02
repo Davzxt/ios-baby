@@ -53,3 +53,19 @@ jobs:
             echo "=== $img symbols (device creation)"
             ipsw dyld macho "$DSC" "$img" --symbols 2>&1 | grep -iE 'CreateSystemDefaultDevice|CopyAllDevices|Plugin|Bundle|IOGPUDevice|AcceleratorES|DeviceCreate' | head -80
           done
+      - name: Metal device creation (disassembly)
+        run: |
+          set +e
+          DSC=$(find dsc -name 'dyld_shared_cache_arm64' | head -1)
+          for sym in _MTLCreateSystemDefaultDevice _MTLCopyAllDevices; do
+            echo "=== disass $sym"
+            ipsw dyld disass "$DSC" --symbol "$sym" 2>&1 | head -200
+          done
+          echo "=== Metal symbols mentioning plugin/accelerator/device creation"
+          ipsw dyld macho "$DSC" Metal --symbols 2>&1 | grep -iE 'Plugin|Accelerator|IOAccelDevice|initWithAcceleratorPort|MTLDeviceInit|DeviceCreate|CreateDevice|loadBundle|bundleWith' | head -120
+          echo "=== IOGPU symbols"
+          ipsw dyld macho "$DSC" IOGPU --symbols 2>&1 | grep -iE 'DeviceCreate|Plugin|initWithAcceleratorPort|MetalDevice' | head -80
+          for sym in _IOGPUDeviceCreate _IOGPUDeviceCreateWithAPIProperty; do
+            echo "=== disass $sym"
+            ipsw dyld disass "$DSC" --symbol "$sym" 2>&1 | head -160
+          done
