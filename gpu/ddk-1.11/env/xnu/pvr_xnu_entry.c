@@ -81,6 +81,50 @@ a01pvr_driver_init(void)
 	return e == PVRSRV_OK ? 0 : (int)e;
 }
 
+/*
+ * The firmware's own sizes and offsets of the client command structures, as it writes them after
+ * the KM list in the alignment-check buffer (rgx_fwif_alignchecks.h, RGXFW_ALIGN_CHECKS_INIT order):
+ * TRACEBUF (7), CMDTA size/sTARegs, CMD3D size/s3DRegs, CMDTRANSFER size/sTransRegs,
+ * CMD_COMPUTE size/sCDMRegs, FREELIST (5), RENDER_TARGET (2), HWRTDATA (7), ... Mesa's DDK 1.11
+ * commands (img-pvr fw-api) were reverse-engineered on a GE8320; on the phone the firmware
+ * discarded our 3D command with HWRTData 0, so these numbers show whether the layouts agree.
+ * boot-arg a01pvralign=1 holds the screen 8 s on them.
+ */
+#include "rgxdevice.h"
+#include "devicemem.h"
+#include "rgx_fwif_alignchecks.h"
+
+static void
+a01pvr_print_fw_align(PVRSRV_DEVICE_NODE *psDevNode)
+{
+	static const IMG_UINT32 aui32KM[] = { RGXFW_ALIGN_CHECKS_INIT_KM };
+	PVRSRV_RGXDEV_INFO *psDevInfo = psDevNode->pvDevice;
+	IMG_UINT32 *p = NULL;
+	int hold = 0;
+
+	if (psDevInfo == NULL || psDevInfo->psRGXFWAlignChecksMemDesc == NULL ||
+	    DevmemAcquireCpuVirtAddr(psDevInfo->psRGXFWAlignChecksMemDesc, (void **)&p) != PVRSRV_OK) {
+		printf("A01CORE PVR: FW align checks: not available\n");
+		return;
+	}
+	IMG_UINT32 *um = p + ARRAY_SIZE(aui32KM) + 1;
+	IMG_UINT32 n = *um++;
+	printf("A01CORE PVR: FW align (UM n=%u): TRACEBUF %u | CMDTA %u regs@%u | CMD3D %u regs@%u | "
+	       "CMDTRANSFER %u regs@%u | CMD_COMPUTE %u regs@%u\n", n,
+	       n > 0 ? um[0] : 0, n > 8 ? um[7] : 0, n > 8 ? um[8] : 0, n > 10 ? um[9] : 0, n > 10 ? um[10] : 0,
+	       n > 12 ? um[11] : 0, n > 12 ? um[12] : 0, n > 14 ? um[13] : 0, n > 14 ? um[14] : 0);
+	if (n > 22) {
+		printf("A01CORE PVR: FW align: FREELIST %u | RENDER_TARGET %u | HWRTDATA %u (MList@%u FL@%u VCE@%u "
+		       "RT@%u state@%u nPR@%u)\n", um[15], um[20], um[22], n > 23 ? um[23] : 0, n > 24 ? um[24] : 0,
+		       n > 25 ? um[25] : 0, n > 26 ? um[26] : 0, n > 27 ? um[27] : 0, n > 28 ? um[28] : 0);
+	}
+	DevmemReleaseCpuVirtAddr(psDevInfo->psRGXFWAlignChecksMemDesc);
+	if (PE_parse_boot_argn("a01pvralign", &hold, sizeof(hold)) && hold) {
+		printf("A01CORE PVR: holding 8 s (a01pvralign)\n");
+		IOSleep(8000);
+	}
+}
+
 /* first open initialises the device (firmware load and boot), as PVRSRVCommonDeviceOpen does */
 int
 a01pvr_open(void **ppvConnection)
@@ -97,6 +141,7 @@ a01pvr_open(void **ppvConnection)
 		if (e != PVRSRV_OK) {
 			return (int)e;
 		}
+		a01pvr_print_fw_align(gpsA01DevNode);
 	}
 	A01_ENV_CONNECTION priv = { gpsA01DevNode, 0 };
 	return (int)PVRSRVConnectionConnect(ppvConnection, &priv);

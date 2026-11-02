@@ -17,6 +17,8 @@
 #define PVR_BUILD_TYPE "release"
 #define PVRSRV_MODNAME "pvrsrvkm"
 #define SUPPORT_RGX 1
+/* the firmware writes its own command-structure sizes next to the KM list (pvr_xnu_entry.c prints them) */
+#define RGXFW_ALIGNCHECKS 1
 #define RELEASE
 #define RGX_BVNC_CORE_KM_HEADER "cores/rgxcore_km_22.49.21.16.h"
 #define RGX_BNC_CONFIG_KM_HEADER "configs/rgxconfig_km_22.V.21.16.h"

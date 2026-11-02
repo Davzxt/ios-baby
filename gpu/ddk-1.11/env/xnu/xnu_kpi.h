@@ -38,6 +38,7 @@ extern void lck_rw_unlock_exclusive(lck_rw_t *lck);
 extern void *IOMalloc(vm_size_t size);         /* iokit/IOKit/IOLib.h */
 extern void IOFree(void *address, vm_size_t size);
 extern void IOSleep(unsigned milliseconds);
+extern int PE_parse_boot_argn(const char *arg_string, void *arg_ptr, int max_arg);   /* pexpert */
 extern void delay(int usec);                   /* osfmk/kern/clock.h */
 extern uint64_t mach_absolute_time(void);
 extern void absolutetime_to_nanoseconds(uint64_t abstime, uint64_t *result);
