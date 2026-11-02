@@ -4231,6 +4231,23 @@ PVRSRV_ERROR RGXScheduleCommand(PVRSRV_RGXDEV_INFO	*psDevInfo,
 	PVRSRVPowerUnlock(psDevInfo->psDeviceNode);
 
 	RGXScheduleCommand_exit:
+	/* A01: the first kicks on the console, to see whether work reaches the firmware (DM 0 GP,
+	 * 1 2D/TLA, 2 TA, 3 3D/TQ3D, 4 CDM). kCCB r/w: the firmware's read offset catching up with
+	 * our write offset means it took the command. */
+	if (psKCCBCmd->eCmdType == RGXFWIF_KCCB_CMD_KICK)
+	{
+		static IMG_UINT32 ui32A01Kicks;
+		if (ui32A01Kicks++ < 48)
+		{
+			extern int printf(const char *, ...);
+			printf("A01CORE PVR: kick #%u DM%u ctx %08x woff %u kCCB r%u/w%u: %s\n", ui32A01Kicks,
+			       (unsigned)eKCCBType, psKCCBCmd->uCmdData.sCmdKickData.psContext.ui32Addr,
+			       psKCCBCmd->uCmdData.sCmdKickData.ui32CWoffUpdate,
+			       psDevInfo->psKernelCCBCtl ? psDevInfo->psKernelCCBCtl->ui32ReadOffset : 0,
+			       psDevInfo->psKernelCCBCtl ? psDevInfo->psKernelCCBCtl->ui32WriteOffset : 0,
+			       PVRSRVGetErrorString(eError));
+		}
+	}
 	return eError;
 }
 

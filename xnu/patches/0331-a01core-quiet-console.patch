@@ -1,0 +1,88 @@
+From e2b25e469be483c30c9be4a0fc089ca6d0eb62cf Mon Sep 17 00:00:00 2001
+From: a01core <a01core@localhost>
+Date: Mon, 2 Nov 2026 20:48:55 -0300
+Subject: [PATCH] 0331 a01core: quiet boot console (boot-arg a01quiet=1 shows
+ only A01/PVR/verdict/panic lines)
+
+---
+ osfmk/console/serial_console.c | 57 ++++++++++++++++++++++++++++++++++
+ 1 file changed, 57 insertions(+)
+
+diff --git a/osfmk/console/serial_console.c b/osfmk/console/serial_console.c
+index 2ab4334..55bc30d 100644
+--- a/osfmk/console/serial_console.c
++++ b/osfmk/console/serial_console.c
+@@ -281,6 +281,53 @@ extern void a5xelte_log_append(const char *c, int size); /* bsd/dev/a5xelte_emmc
+ int sweet_console_muted;
+ #endif
+ 
++#if defined(ARM64_BOARD_CONFIG_A01CORE)
++/*
++ * boot-arg a01quiet=1: the screen shows only the lines we read on the phone (A01 / PVR / the GPU
++ * test verdict / XNU / panic); the rest (exec, EXIT, SWEET FB, AKS, HID, sandbox ...) still goes
++ * to the persistent log above, just not to the screen. A panic prints everything again.
++ */
++#include <pexpert/pexpert.h>
++#include <string.h>
++static int a01_quiet = -1;
++static char a01_line[240];
++static int a01_len;
++
++static bool
++a01_keep_line(const char *s, int n)
++{
++	static const char *const keys[] = {
++		"A01", "PVR", "anic", "RESULTADO", "TESTE", "ERRO", "FALHOU", "FUNCIONOU", "XNU", "Debugger",
++	};
++	for (unsigned i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
++		if (strnstr(s, keys[i], (size_t)n) != NULL) {
++			return true;
++		}
++	}
++	return false;
++}
++
++static void
++a01_quiet_puts(const char *c, int size, bool poll)
++{
++	while (size-- > 0) {
++		char ch = *c++;
++		if (a01_len < (int)sizeof(a01_line) - 1) {
++			a01_line[a01_len++] = ch;
++		}
++		if (ch == '\n') {
++			a01_line[a01_len] = 0;
++			if (a01_keep_line(a01_line, a01_len)) {
++				for (int i = 0; i < a01_len; i++) {
++					_cnputc(a01_line[i], poll);
++				}
++			}
++			a01_len = 0;
++		}
++	}
++}
++#endif
++
+ static inline void
+ _cnputs(char *c, int size, bool poll)
+ {
+@@ -303,6 +350,16 @@ _cnputs(char *c, int size, bool poll)
+ 	}
+ 
+ 	assert(c != NULL);
++#if defined(ARM64_BOARD_CONFIG_A01CORE)
++	if (a01_quiet < 0 && PE_state.bootArgs != NULL) {   /* boot-args not read before PE_init_platform */
++		int q = 0;
++		a01_quiet = (PE_parse_boot_argn("a01quiet", &q, sizeof(q)) && q != 0) ? 1 : 0;
++	}
++	if (a01_quiet == 1 && !panic_active()) {
++		a01_quiet_puts(c, size, poll);
++		return;
++	}
++#endif
+ 
+ 	while (size-- > 0) {
+ 		_cnputc(*c, poll);
+-- 
+2.55.0.windows.5
+

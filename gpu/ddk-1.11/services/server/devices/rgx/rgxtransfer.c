@@ -680,6 +680,16 @@ PVRSRV_ERROR PVRSRVRGXSubmitTransferKM(RGX_SERVER_TQ_CONTEXT	*psTransferContext,
 
 	/* Ensure the string is null-terminated (Required for safety) */
 	szFenceName[31] = '\0';
+	{	/* A01: each transfer submit (fill/copy/blit) as it arrives from Mesa */
+		static IMG_UINT32 ui32A01TQ;
+		if (ui32A01TQ++ < 24 && ui32PrepareCount > 0)
+		{
+			extern int printf(const char *, ...);
+			printf("A01CORE PVR: TQ submit #%u n=%u flags0 %x size0 %u fence %d tl3d %d\n", ui32A01TQ,
+			       ui32PrepareCount, pui32TQPrepareFlags[0], paui32FWCommandSize[0], (int)iCheckFence,
+			       (int)i3DUpdateTimeline);
+		}
+	}
 
 	if ((ui32PrepareCount == 0) || (ui32PrepareCount > TQ_MAX_PREPARES_PER_SUBMIT))
 	{
