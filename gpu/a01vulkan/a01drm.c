@@ -73,35 +73,49 @@ a01_connection(void)
 
 /* Diagnostics: the last bridge calls and PMR maps, printed by a01metal-test when it crashes or
  * hangs (a01drm_trace_dump). Plain counters, no locking: good enough for a post-mortem. */
-#define A01_TRACE_N 8
+#define A01_TRACE_N 6
+#define A01_TRACE_PENDING 0x7fffffff   /* kr of a call still inside the kernel */
 static struct { uint32_t kind, group, func; int32_t kr; uint64_t out; } a01_trace[A01_TRACE_N];
 static uint32_t a01_trace_count;
 
-static void
-a01_trace_add(uint32_t kind, uint32_t group, uint32_t func, kern_return_t kr, uint64_t out)
+/* recorded before the call enters the kernel, so a call that never returns still shows up */
+static uint32_t
+a01_trace_begin(uint32_t kind, uint32_t group, uint32_t func)
 {
-	uint32_t i = a01_trace_count++ % A01_TRACE_N;
+	uint32_t i = a01_trace_count % A01_TRACE_N;
 	a01_trace[i].kind = kind;
 	a01_trace[i].group = group;
 	a01_trace[i].func = func;
-	a01_trace[i].kr = kr;
+	a01_trace[i].kr = A01_TRACE_PENDING;
+	a01_trace[i].out = 0;
+	a01_trace_count++;
+	return i;
+}
+
+static void
+a01_trace_end(uint32_t i, kern_return_t kr, uint64_t out)
+{
 	a01_trace[i].out = out;
+	a01_trace[i].kr = kr;
 }
 
 void
 a01drm_trace_dump(FILE *f)
 {
-	fprintf(f, "  a01drm: conexao A01CoreGPU %s (kr %d), %u chamadas\n",
+	fprintf(f, "a01drm: conexao A01CoreGPU %s (kr %d), %u chamadas\n",
 	        a01_state == 1 ? "aberta" : a01_state == 0 ? "nao tentada" : "FALHOU", a01_conn_kr, a01_trace_count);
 	uint32_t n = a01_trace_count < A01_TRACE_N ? a01_trace_count : A01_TRACE_N;
 	for (uint32_t k = 0; k < n; k++) {
 		uint32_t i = (a01_trace_count - n + k) % A01_TRACE_N;
 		if (a01_trace[i].kind == 0) {
-			fprintf(f, "  #%u bridge %u/%u kr 0x%x ret %llu\n", a01_trace_count - n + k + 1, a01_trace[i].group,
-			        a01_trace[i].func, a01_trace[i].kr, (unsigned long long)a01_trace[i].out);
+			fprintf(f, " #%u bridge %u/%u", a01_trace_count - n + k + 1, a01_trace[i].group, a01_trace[i].func);
 		} else {
-			fprintf(f, "  #%u map pmr %u kr 0x%x ret %llu\n", a01_trace_count - n + k + 1, a01_trace[i].group,
-			        a01_trace[i].kr, (unsigned long long)a01_trace[i].out);
+			fprintf(f, " #%u map pmr %u", a01_trace_count - n + k + 1, a01_trace[i].group);
+		}
+		if (a01_trace[i].kr == A01_TRACE_PENDING) {
+			fprintf(f, " EM ANDAMENTO\n");
+		} else {
+			fprintf(f, " kr 0x%x ret %llu\n", a01_trace[i].kr, (unsigned long long)a01_trace[i].out);
 		}
 	}
 }
@@ -123,8 +137,9 @@ drmIoctl(int fd, unsigned long request, void *arg)
 		           cmd->out_data_ptr, cmd->out_data_size };
 	uint64_t out[1] = { 0 };
 	uint32_t n = 1;
+	uint32_t slot = a01_trace_begin(0, cmd->bridge_id, cmd->bridge_func_id);
 	kern_return_t kr = IOConnectCallScalarMethod(c, 0, in, 6, out, &n);
-	a01_trace_add(0, cmd->bridge_id, cmd->bridge_func_id, kr, out[0]);
+	a01_trace_end(slot, kr, out[0]);
 	if (kr != KERN_SUCCESS || out[0] != 0) {   /* dispatch failure; per-call errors are in the out buffer */
 		errno = EINVAL;
 		return -1;
@@ -143,8 +158,9 @@ a01drm_map_pmr(int fd, uint64_t pmr_handle, void **map)
 	}
 	uint64_t in[1] = { pmr_handle }, out[2] = { 0, 0 };
 	uint32_t n = 2;
+	uint32_t slot = a01_trace_begin(1, (uint32_t)pmr_handle, 0);
 	kern_return_t kr = IOConnectCallScalarMethod(c, 1, in, 1, out, &n);
-	a01_trace_add(1, (uint32_t)pmr_handle, 0, kr, out[0]);
+	a01_trace_end(slot, kr, out[0]);
 	if (kr != KERN_SUCCESS || out[0] != 0) {
 		errno = ENOMEM;
 		return -1;

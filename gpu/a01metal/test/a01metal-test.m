@@ -10,57 +10,159 @@
 #include <signal.h>
 #include <dlfcn.h>
 #include <execinfo.h>
+#include <pthread.h>
+#include <stdarg.h>
+#include <time.h>
+#include <mach/mach.h>
+#include <sys/param.h>
 #include "tri_spv.h"   /* tri_vert_spv / tri_frag_spv, built from tri.vert / tri.frag */
 
-/* ---- diagnostics: a crash or a hang still leaves a readable report in autorun.out ---- */
+/* ---- diagnostics ----
+ * The kernel shows the first ~1 KB of autorun.out at the next boot. Output is not appended: the
+ * file is rewritten as a whole (our lines + a status footer) on every line and once a second by a
+ * watcher thread. So a run that is killed (SIGKILL, jetsam) or stuck inside a kernel call still
+ * leaves its last state: step, seconds, memory footprint, last GE8100 bridge calls (the one in
+ * progress included). Mesa's stderr goes through a pipe into the same text. */
 #define A01_HANG_SECONDS 120
 
-static void
-dump_bridge_calls(void)
+static char g_log[1400];
+static size_t g_len;
+static pthread_mutex_t g_mx = PTHREAD_MUTEX_INITIALIZER;
+static int g_out = STDOUT_FILENO;
+static time_t g_t0;
+static const char *volatile g_state = "rodando";
+
+static size_t
+footprint_kb(void)
 {
+	task_vm_info_data_t vi;
+	mach_msg_type_number_t n = TASK_VM_INFO_COUNT;
+	if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vi, &n) != KERN_SUCCESS) {
+		return 0;
+	}
+	return (size_t)(vi.phys_footprint / 1024);
+}
+
+static void
+snapshot(const char *state, int locked)
+{
+	static char buf[2600];
+	size_t n = 0;
+	if (!locked) {
+		pthread_mutex_lock(&g_mx);
+	}
+	/* status first: the boot report shows only the first ~1 KB */
+	n += (size_t)snprintf(buf + n, sizeof(buf) - n, "[%s | etapa: %s | %ld s | mem %zu KB]\n", state, A01MTLStep,
+	                      (long)(time(NULL) - g_t0), footprint_kb());
 	void *drm = dlopen("/private/var/a01/lib/libdrm.2.dylib", RTLD_NOLOAD | RTLD_LAZY);
 	void (*dump)(FILE *) = drm ? (void (*)(FILE *))dlsym(drm, "a01drm_trace_dump") : NULL;
-	if (dump) {
-		dump(stdout);
-	} else {
-		printf("  a01drm: nao carregada\n");
+	if (dump && n < sizeof(buf) - 1) {
+		FILE *f = fmemopen(buf + n, sizeof(buf) - n, "w");
+		if (f) {
+			dump(f);
+			fflush(f);
+			n += (size_t)ftell(f);
+			fclose(f);
+		}
 	}
+	if (n + g_len < sizeof(buf)) {
+		memcpy(buf + n, g_log, g_len);
+		n += g_len;
+	}
+	ftruncate(g_out, 0);
+	pwrite(g_out, buf, n, 0);
+	if (!locked) {
+		pthread_mutex_unlock(&g_mx);
+	}
+}
+
+static void
+out(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+static void
+out(const char *fmt, ...)
+{
+	va_list ap;
+	va_start(ap, fmt);
+	pthread_mutex_lock(&g_mx);
+	if (g_len < sizeof(g_log) - 1) {
+		int k = vsnprintf(g_log + g_len, sizeof(g_log) - g_len, fmt, ap);
+		g_len = k < 0 ? g_len : MIN(g_len + (size_t)k, sizeof(g_log) - 1);
+	}
+	snapshot(g_state, 1);
+	pthread_mutex_unlock(&g_mx);
+	va_end(ap);
+}
+
+static void *
+watcher(void *arg)
+{
+	(void)arg;
+	for (;;) {
+		sleep(1);
+		snapshot(g_state, 0);
+	}
+	return NULL;
+}
+
+static void *
+stderr_reader(void *arg)
+{
+	int fd = (int)(intptr_t)arg;
+	char line[256];
+	size_t len = 0;
+	char c;
+	while (read(fd, &c, 1) == 1) {
+		if (len < sizeof(line) - 1) {
+			line[len++] = c;
+		}
+		if (c == '\n') {
+			line[len] = '\0';
+			out("%s", line);
+			len = 0;
+		}
+	}
+	return NULL;
 }
 
 static void
 crash_handler(int sig, siginfo_t *si, void *ctx)
 {
 	(void)ctx;
+	char state[160];
 	if (sig == SIGALRM) {
-		printf("ERRO: TRAVOU por %d s na etapa: %s\n", A01_HANG_SECONDS, A01MTLStep);
+		snprintf(state, sizeof(state), "ERRO: TRAVOU %d s", A01_HANG_SECONDS);
 	} else {
-		printf("ERRO: CAIU com sinal %d (%s) endereco %p na etapa: %s\n", sig, strsignal(sig),
-		       si ? si->si_addr : NULL, A01MTLStep);
+		snprintf(state, sizeof(state), "ERRO: CAIU sinal %d (%s) end %p", sig, strsignal(sig), si ? si->si_addr : NULL);
 	}
-	dump_bridge_calls();
-	void *frames[12];
-	int n = backtrace(frames, 12);
-	for (int i = 2; i < n; i++) {   /* skip this handler and the signal trampoline */
+	int locked = pthread_mutex_trylock(&g_mx) == 0;
+	void *frames[10];
+	int n = backtrace(frames, 10);
+	for (int i = 2; i < n && g_len < sizeof(g_log) - 80; i++) {   /* skip this handler and the trampoline */
 		Dl_info di;
+		const char *lib = "?", *sym = "?";
+		unsigned long off = (unsigned long)frames[i];
 		if (dladdr(frames[i], &di) && di.dli_fname) {
-			const char *lib = strrchr(di.dli_fname, '/');
-			printf("  %s+0x%lx %s\n", lib ? lib + 1 : di.dli_fname, (unsigned long)((char *)frames[i] - (char *)di.dli_fbase),
-			       di.dli_sname ? di.dli_sname : "?");
-		} else {
-			printf("  %p\n", frames[i]);
+			lib = strrchr(di.dli_fname, '/') ? strrchr(di.dli_fname, '/') + 1 : di.dli_fname;
+			off = (unsigned long)((char *)frames[i] - (char *)di.dli_fbase);
+			sym = di.dli_sname ? di.dli_sname : "?";
 		}
+		g_len += (size_t)snprintf(g_log + g_len, sizeof(g_log) - g_len, " %s+0x%lx %s\n", lib, off, sym);
 	}
-	fflush(stdout);
+	snapshot(state, 1);
+	(void)locked;
 	_exit(100 + sig);
 }
 
 static void
 install_diagnostics(void)
 {
-	/* launchd appends to autorun.out: keep only this run so the boot report fits on screen */
-	ftruncate(STDOUT_FILENO, 0);
-	lseek(STDOUT_FILENO, 0, SEEK_SET);
-	dup2(STDOUT_FILENO, STDERR_FILENO);   /* Mesa logs to stderr: keep them in order with ours */
+	g_t0 = time(NULL);
+	int p[2];
+	if (pipe(p) == 0) {
+		dup2(p[1], STDERR_FILENO);
+		pthread_t t;
+		pthread_create(&t, NULL, stderr_reader, (void *)(intptr_t)p[0]);
+	}
 	struct sigaction sa;
 	memset(&sa, 0, sizeof(sa));
 	sa.sa_sigaction = crash_handler;
@@ -69,6 +171,8 @@ install_diagnostics(void)
 	for (unsigned i = 0; i < sizeof(sigs) / sizeof(sigs[0]); i++) {
 		sigaction(sigs[i], &sa, NULL);
 	}
+	pthread_t w;
+	pthread_create(&w, NULL, watcher, NULL);
 	alarm(A01_HANG_SECONDS);
 }
 
@@ -96,16 +200,16 @@ pause_between(void)
 int main(void)
 {
 	@autoreleasepool {
-		setvbuf(stdout, NULL, _IONBF, 0);
 		install_diagnostics();
-		printf("=== A01Metal: testes da GPU (Metal -> Vulkan -> DDK -> GE8100) ===\n");
+		out("=== A01Metal: testes da GPU (Metal -> Vulkan -> DDK -> GE8100) ===\n");
 		id<MTLDevice> dev = A01MTLCreateSystemDefaultDevice();
 		if (!dev) {
-			printf("ERRO: sem dispositivo Metal: %s (etapa: %s)\n", A01MTLLastError().UTF8String, A01MTLStep);
-			dump_bridge_calls();
+			out("ERRO: sem dispositivo Metal: %s\n", A01MTLLastError().UTF8String);
+			g_state = "fim com ERRO";
+			snapshot(g_state, 0);
 			return 1;
 		}
-		printf("dispositivo: %s\n", dev.name.UTF8String);
+		out("dispositivo: %s\n", dev.name.UTF8String);
 		id<MTLCommandQueue> q = [dev newCommandQueue];
 		int failures = 0;
 
@@ -127,7 +231,7 @@ int main(void)
 			unsigned bad = 0;
 			for (unsigned i = 0; i < 4096; i++) bad += p[i] != 0x5a;
 			int ok = cb.status == MTLCommandBufferStatusCompleted && !bad;
-			printf("TESTE 1 (copia de memoria): %s (status %ld, %u bytes errados%s%s)\n", ok ? "OK" : "ERRO",
+			out("TESTE 1 (copia de memoria): %s (status %ld, %u bytes errados%s%s)\n", ok ? "OK" : "ERRO",
 			       (long)cb.status, bad, cb.error ? ", " : "", cb.error ? cb.error.localizedDescription.UTF8String : "");
 			failures += !ok;
 		}
@@ -143,7 +247,7 @@ int main(void)
 			id<MTLTexture> t = [dev newTextureWithDescriptor:td];
 			id<MTLBuffer> out = [dev newBufferWithLength:64 * 64 * 4 options:MTLResourceStorageModeShared];
 			if (!t || !out) {
-				printf("TESTE 2 (textura + render pass): ERRO (textura ou buffer nao criados)\n");
+				out("TESTE 2 (textura + render pass): ERRO (textura ou buffer nao criados)\n");
 				failures++;
 			} else {
 				memset(out.contents, 0, 64 * 64 * 4);
@@ -155,7 +259,7 @@ int main(void)
 				id<MTLCommandBuffer> cb = [q commandBuffer];
 				id<MTLRenderCommandEncoder> re = [cb renderCommandEncoderWithDescriptor:rp];
 				if (!re) {
-					printf("TESTE 2 (textura + render pass): ERRO (%s)\n", cb.error.localizedDescription.UTF8String);
+					out("TESTE 2 (textura + render pass): ERRO (%s)\n", cb.error.localizedDescription.UTF8String);
 					failures++;
 				} else {
 					[re endEncoding];
@@ -169,7 +273,7 @@ int main(void)
 					unsigned bad;
 					int ok = cb.status == MTLCommandBufferStatusCompleted && check_pixels(out, 64, 64, 255, 0, 0, 255, &bad);
 					const uint8_t *p = out.contents;
-					printf("TESTE 2 (textura + render pass): %s (status %ld, %u pixels errados, pixel 0 = %u,%u,%u,%u)\n",
+					out("TESTE 2 (textura + render pass): %s (status %ld, %u pixels errados, pixel 0 = %u,%u,%u,%u)\n",
 					       ok ? "OK" : "ERRO", (long)cb.status, bad, p[0], p[1], p[2], p[3]);
 					failures += !ok;
 				}
@@ -194,7 +298,7 @@ int main(void)
 			id<MTLTexture> t = [dev newTextureWithDescriptor:td];
 			id<MTLBuffer> out = [dev newBufferWithLength:64 * 64 * 4 options:MTLResourceStorageModeShared];
 			if (!ps || !t || !out) {
-				printf("TESTE 3 (shader simples): ERRO (%s)\n", e ? e.localizedDescription.UTF8String : "textura ou buffer nao criados");
+				out("TESTE 3 (shader simples): ERRO (%s)\n", e ? e.localizedDescription.UTF8String : "textura ou buffer nao criados");
 				failures++;
 			} else {
 				memset(out.contents, 0, 64 * 64 * 4);
@@ -218,14 +322,15 @@ int main(void)
 				unsigned bad;
 				int ok = cb.status == MTLCommandBufferStatusCompleted && check_pixels(out, 64, 64, 0, 255, 0, 255, &bad);
 				const uint8_t *p = out.contents;
-				printf("TESTE 3 (shader simples): %s (status %ld, %u pixels errados, pixel central = %u,%u,%u,%u)\n",
+				out("TESTE 3 (shader simples): %s (status %ld, %u pixels errados, pixel central = %u,%u,%u,%u)\n",
 				       ok ? "OK" : "ERRO", (long)cb.status, bad, p[4 * (32 * 64 + 32)], p[4 * (32 * 64 + 32) + 1],
 				       p[4 * (32 * 64 + 32) + 2], p[4 * (32 * 64 + 32) + 3]);
 				failures += !ok;
 			}
 		}
 		alarm(0);
-		printf("=== resultado: %d de 3 testes com ERRO ===\n", failures);
+		g_state = failures ? "fim com ERRO" : "fim OK";
+		out("=== resultado: %d de 3 testes com ERRO ===\n", failures);
 		return failures;
 	}
 }
