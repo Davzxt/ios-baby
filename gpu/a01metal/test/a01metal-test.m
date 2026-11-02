@@ -128,7 +128,17 @@ snapshot(const char *state, int locked)
 	if (!locked) {
 		pthread_mutex_lock(&g_mx);
 	}
-	/* status first: the boot report shows only the first ~1 KB */
+	/* the verdict first, as one line to read off the screen at the next boot's report (which shows
+	 * only the first ~1 KB); the details follow */
+	if (strncmp(state, "fim OK", 6) == 0) {
+		n += (size_t)snprintf(buf + n, sizeof(buf) - n, "A01METAL: >>> RESULTADO: FUNCIONOU (3 de 3 testes OK) <<<\n");
+	} else if (strncmp(state, "fim", 3) == 0 || strncmp(state, "ERRO", 4) == 0) {
+		n += (size_t)snprintf(buf + n, sizeof(buf) - n, "A01METAL: >>> RESULTADO: FALHOU (%s) em \"%s\". CODIGO: %s <<<\n",
+		                      state, A01MTLStep, g_code);
+	} else {
+		n += (size_t)snprintf(buf + n, sizeof(buf) - n, "A01METAL: >>> PAROU em \"%s\" depois de %ld s. CODIGO: %s <<<\n",
+		                      A01MTLStep, (long)(time(NULL) - g_t0), g_code);
+	}
 	n += (size_t)snprintf(buf + n, sizeof(buf) - n, "[%s | etapa: %s | %ld s | mem %zu KB]\n%s", state, A01MTLStep,
 	                      (long)(time(NULL) - g_t0), footprint_kb(), g_where);
 	void *drm = dlopen("/private/var/a01/lib/libdrm.2.dylib", RTLD_NOLOAD | RTLD_LAZY);
@@ -368,18 +378,6 @@ pause_between(void)
 	sleep(3);
 }
 
-/* live mode: the result was on screen in this boot, so the next boot has nothing to report and
- * skips the kernel's 15 s report pause */
-static void
-clear_reports(void)
-{
-	if (g_console >= 0) {
-		sleep(20);   /* time to read / photograph the result */
-		unlink("/private/var/herolte/autorun.out");
-		unlink("/private/var/a01/drop.txt");
-	}
-}
-
 int main(int argc, char **argv)
 {
 	(void)argc;
@@ -394,8 +392,7 @@ int main(int argc, char **argv)
 			report("A01METAL: >>> RESULTADO: FALHOU ao criar a GPU (%s) <<<\n", A01MTLLastError().UTF8String);
 			g_state = "fim com ERRO";
 			snapshot(g_state, 0);
-			clear_reports();
-			return 1;
+			return 1;   /* keep the report: it is shown at the next boot */
 		}
 		report("dispositivo: %s\n", dev.name.UTF8String);
 		id<MTLCommandQueue> q = [dev newCommandQueue];
@@ -524,7 +521,6 @@ int main(int argc, char **argv)
 		} else {
 			report("A01METAL: >>> RESULTADO: FALHOU (%d de 3 testes com ERRO, veja as linhas TESTE acima) <<<\n", failures);
 		}
-		clear_reports();
-		return failures;
+		return failures;   /* the report stays: the next boot shows the verdict line first */
 	}
 }
