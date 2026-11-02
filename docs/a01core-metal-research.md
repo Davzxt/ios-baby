@@ -41,3 +41,30 @@ BVNC 22.49.21.16) running iOS 16, at least partially.
 - M4: render pipelines (triangle to an IOSurface), then CoreAnimation.
 
 Each milestone needs the previous one. Nothing above M0 (power-on + BVNC) is done.
+
+## How iOS 16 Metal finds its driver (metal-research CI run 41441231416)
+
+Read from the iPhone X (D22AP) 16.7.16 dyld shared cache with blacktop/ipsw: strings and symbol
+names only, nothing stored.
+
+- `Metal` and `IOGPU` both carry the strings `MetalPluginName`, `MetalPluginClassName` and
+  `/System/Library/Extensions`.
+- Apple's `AGXGPURawCounter` spells the pattern out in an assertion:
+  `IORegistryEntryCreateCFProperty(acceleratorPort, CFSTR("MetalPluginName"), ...)` and
+  `IOGPUDeviceCreate(acceleratorPort)`.
+- The service those clients look up is `IOAcceleratorES` (strings in Metal, QuartzCore, SpriteKit,
+  SceneKit, OpenGLES, IOAccelMemoryInfo).
+- The driver bundle is `/System/Library/Extensions/AGXMetalA11.bundle/AGXMetalA11`. Its class
+  `AGXPrincipalDevice` has `initWithAcceleratorPort:` but refuses "Attempting to load Metal bundle
+  via AGXPrincipalDevice is not supported!": Metal instantiates the class named by
+  `MetalPluginClassName`, not the bundle's principal class.
+- Metal's own device classes are `MTLIOAccelDevice` / `IOGPUMetal*` (buffers, heaps, textures,
+  command queues over IOGPU shared memory and resource lists).
+
+Working model for the A01:
+1. The A01 GPU service is (or publishes) an `IOAcceleratorES` with `MetalPluginName` =
+   `A01Metal` and `MetalPluginClassName` = our device class.
+2. `/System/Library/Extensions/A01Metal.bundle/A01Metal` holds that class; Metal calls
+   `initWithAcceleratorPort:` on it and receives our MTLDevice (A01Metal on Vulkan).
+3. Still to read (disassembly of Metal's device creation): whether the class must subclass
+   `MTLIOAccelDevice` / `_MTLDevice`, and which IOGPU kernel calls Metal makes before handing over.
