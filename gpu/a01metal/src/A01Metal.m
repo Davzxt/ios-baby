@@ -114,8 +114,9 @@ static BOOL A01VKLoad(A01VK *vk)
 	VkDeviceCreateInfo dci = { .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
 	                           .queueCreateInfoCount = 1, .pQueueCreateInfos = &qci };
 	STEP("vkCreateDevice");
-	if (pvkCreateDevice(vk->phys, &dci, NULL, &vk->dev) != VK_SUCCESS) {
-		gLastError = @"vkCreateDevice failed";
+	VkResult dr = pvkCreateDevice(vk->phys, &dci, NULL, &vk->dev);
+	if (dr != VK_SUCCESS) {
+		gLastError = [NSString stringWithFormat:@"vkCreateDevice VkResult %d", (int)dr];
 		return NO;
 	}
 	pvkGetDeviceQueue(vk->dev, vk->qfam, 0, &vk->queue);

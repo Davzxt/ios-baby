@@ -44,6 +44,8 @@ static int g_console = -1;
  * where a run is stuck when it makes no more bridge calls. */
 static mach_port_t g_main_thread = MACH_PORT_NULL;
 static char g_where[420];
+static char g_mesa[160] = "-";   /* the last Mesa log line (its stderr), for the verdict */
+static char g_err[160] = "";     /* A01Metal's error, for the verdict */
 static char g_code[140] = "?";   /* short "lib+offset" of the innermost GPU-stack frame, easy to type */
 static void refresh_images(void);
 
@@ -141,8 +143,9 @@ snapshot(const char *state, int locked)
 	if (strncmp(state, "fim OK", 6) == 0) {
 		n += (size_t)snprintf(buf + n, sizeof(buf) - n, "A01METAL: >>> RESULTADO: FUNCIONOU (3 de 3 testes OK) <<<\n");
 	} else if (strncmp(state, "fim", 3) == 0 || strncmp(state, "ERRO", 4) == 0) {
-		n += (size_t)snprintf(buf + n, sizeof(buf) - n, "A01METAL: >>> RESULTADO: FALHOU (%s) em \"%s\". CODIGO: %s <<<\n",
-		                      state, A01MTLStep, g_code);
+		n += (size_t)snprintf(buf + n, sizeof(buf) - n,
+		                      "A01METAL: >>> RESULTADO: FALHOU (%s) em \"%s\": %s. MESA: %s. CODIGO: %s <<<\n",
+		                      state, A01MTLStep, g_err[0] ? g_err : "?", g_mesa, g_code);
 	} else {
 		n += (size_t)snprintf(buf + n, sizeof(buf) - n, "A01METAL: >>> PAROU em \"%s\" depois de %ld s. CODIGO: %s <<<\n",
 		                      A01MTLStep, (long)(time(NULL) - g_t0), g_code);
@@ -261,6 +264,11 @@ stderr_reader(void *arg)
 		}
 		if (c == '\n') {
 			line[len] = '\0';
+			snprintf(g_mesa, sizeof(g_mesa), "%s", line);
+			char *eol = strchr(g_mesa, '\n');
+			if (eol) {
+				*eol = '\0';
+			}
 			report("%s", line);
 			len = 0;
 		}
@@ -468,6 +476,7 @@ int main(int argc, char **argv)
 		id<MTLDevice> dev = A01MTLCreateSystemDefaultDevice();
 		if (!dev) {
 			report("ERRO: sem dispositivo Metal: %s\n", A01MTLLastError().UTF8String);
+			snprintf(g_err, sizeof(g_err), "%s", A01MTLLastError().UTF8String);
 			report("A01METAL: >>> RESULTADO: FALHOU ao criar a GPU (%s) <<<\n", A01MTLLastError().UTF8String);
 			g_state = "fim com ERRO";
 			snapshot(g_state, 0);
