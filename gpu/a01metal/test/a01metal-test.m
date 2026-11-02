@@ -7,7 +7,72 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include <signal.h>
+#include <dlfcn.h>
+#include <execinfo.h>
 #include "tri_spv.h"   /* tri_vert_spv / tri_frag_spv, built from tri.vert / tri.frag */
+
+/* ---- diagnostics: a crash or a hang still leaves a readable report in autorun.out ---- */
+#define A01_HANG_SECONDS 120
+
+static void
+dump_bridge_calls(void)
+{
+	void *drm = dlopen("/private/var/a01/lib/libdrm.2.dylib", RTLD_NOLOAD | RTLD_LAZY);
+	void (*dump)(FILE *) = drm ? (void (*)(FILE *))dlsym(drm, "a01drm_trace_dump") : NULL;
+	if (dump) {
+		dump(stdout);
+	} else {
+		printf("  a01drm: nao carregada\n");
+	}
+}
+
+static void
+crash_handler(int sig, siginfo_t *si, void *ctx)
+{
+	(void)ctx;
+	if (sig == SIGALRM) {
+		printf("ERRO: TRAVOU por %d s na etapa: %s\n", A01_HANG_SECONDS, A01MTLStep);
+	} else {
+		printf("ERRO: CAIU com sinal %d (%s) endereco %p na etapa: %s\n", sig, strsignal(sig),
+		       si ? si->si_addr : NULL, A01MTLStep);
+	}
+	dump_bridge_calls();
+	void *frames[12];
+	int n = backtrace(frames, 12);
+	for (int i = 2; i < n; i++) {   /* skip this handler and the signal trampoline */
+		Dl_info di;
+		if (dladdr(frames[i], &di) && di.dli_fname) {
+			const char *lib = strrchr(di.dli_fname, '/');
+			printf("  %s+0x%lx %s\n", lib ? lib + 1 : di.dli_fname, (unsigned long)((char *)frames[i] - (char *)di.dli_fbase),
+			       di.dli_sname ? di.dli_sname : "?");
+		} else {
+			printf("  %p\n", frames[i]);
+		}
+	}
+	fflush(stdout);
+	_exit(100 + sig);
+}
+
+static void
+install_diagnostics(void)
+{
+	/* launchd appends to autorun.out: keep only this run so the boot report fits on screen */
+	ftruncate(STDOUT_FILENO, 0);
+	lseek(STDOUT_FILENO, 0, SEEK_SET);
+	dup2(STDOUT_FILENO, STDERR_FILENO);   /* Mesa logs to stderr: keep them in order with ours */
+	struct sigaction sa;
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_sigaction = crash_handler;
+	sa.sa_flags = SA_SIGINFO | SA_RESETHAND;
+	int sigs[] = { SIGSEGV, SIGBUS, SIGILL, SIGABRT, SIGTRAP, SIGFPE, SIGSYS, SIGALRM };
+	for (unsigned i = 0; i < sizeof(sigs) / sizeof(sigs[0]); i++) {
+		sigaction(sigs[i], &sa, NULL);
+	}
+	alarm(A01_HANG_SECONDS);
+}
+
+#define STEP(s) (A01MTLStep = (s))
 
 static int
 check_pixels(id<MTLBuffer> b, unsigned w, unsigned h, uint8_t r, uint8_t g, uint8_t bl, uint8_t a, unsigned *bad_out)
@@ -31,11 +96,13 @@ pause_between(void)
 int main(void)
 {
 	@autoreleasepool {
-		setvbuf(stdout, NULL, _IOLBF, 0);
+		setvbuf(stdout, NULL, _IONBF, 0);
+		install_diagnostics();
 		printf("=== A01Metal: testes da GPU (Metal -> Vulkan -> DDK -> GE8100) ===\n");
 		id<MTLDevice> dev = A01MTLCreateSystemDefaultDevice();
 		if (!dev) {
-			printf("ERRO: sem dispositivo Metal: %s\n", A01MTLLastError().UTF8String);
+			printf("ERRO: sem dispositivo Metal: %s (etapa: %s)\n", A01MTLLastError().UTF8String, A01MTLStep);
+			dump_bridge_calls();
 			return 1;
 		}
 		printf("dispositivo: %s\n", dev.name.UTF8String);
@@ -43,6 +110,8 @@ int main(void)
 		int failures = 0;
 
 		/* TESTE 1 */
+		STEP("TESTE 1 (copia de memoria)");
+		alarm(A01_HANG_SECONDS);
 		{
 			id<MTLBuffer> a = [dev newBufferWithLength:4096 options:MTLResourceStorageModeShared];
 			id<MTLBuffer> b = [dev newBufferWithLength:4096 options:MTLResourceStorageModeShared];
@@ -65,6 +134,8 @@ int main(void)
 		pause_between();
 
 		/* TESTE 2 */
+		STEP("TESTE 2 (textura + render pass)");
+		alarm(A01_HANG_SECONDS);
 		{
 			MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
 			                                                                               width:64 height:64 mipmapped:NO];
@@ -107,6 +178,8 @@ int main(void)
 		pause_between();
 
 		/* TESTE 3 */
+		STEP("TESTE 3 (shader simples)");
+		alarm(A01_HANG_SECONDS);
 		{
 			NSError *e = nil;
 			id<MTLLibrary> vl = [dev newLibraryWithData:(dispatch_data_t)[NSData dataWithBytes:tri_vert_spv length:sizeof(tri_vert_spv)] error:&e];
@@ -151,6 +224,7 @@ int main(void)
 				failures += !ok;
 			}
 		}
+		alarm(0);
 		printf("=== resultado: %d de 3 testes com ERRO ===\n", failures);
 		return failures;
 	}

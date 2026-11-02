@@ -20,5 +20,7 @@ FOUNDATION_EXPORT id<MTLDevice> _Nullable A01MTLCreateSystemDefaultDevice(void);
 
 // Last reason device creation failed (for logs and tests).
 FOUNDATION_EXPORT NSString *A01MTLLastError(void);
+/* the step A01Metal is in (diagnostics) */
+FOUNDATION_EXPORT const char *volatile A01MTLStep;
 
 NS_ASSUME_NONNULL_END

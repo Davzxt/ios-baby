@@ -16,6 +16,9 @@
 
 static NSString *gLastError = @"not tried";
 NSString *A01MTLLastError(void) { return gLastError; }
+/* the step A01Metal is in, for crash/hang reports (a01metal-test) */
+const char *volatile A01MTLStep = "inicio";
+#define STEP(s) (A01MTLStep = (s))
 
 static NSError *A01Err(NSString *msg)
 {
@@ -49,6 +52,7 @@ typedef struct {
 static BOOL A01VKLoad(A01VK *vk)
 {
 	const char *path = getenv("A01METAL_VULKAN") ?: A01METAL_DEFAULT_VULKAN;
+	STEP("dlopen libvulkan_powervr");
 	void *lib = dlopen(path, RTLD_NOW | RTLD_LOCAL);
 	if (!lib) {
 		const char *why = dlerror();
@@ -68,6 +72,7 @@ static BOOL A01VKLoad(A01VK *vk)
 	VkApplicationInfo app = { .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO, .pEngineName = "A01Metal",
 	                          .apiVersion = VK_API_VERSION_1_1 };
 	VkInstanceCreateInfo ici = { .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, .pApplicationInfo = &app };
+	STEP("vkCreateInstance");
 	if (!pvkCreateInstance || pvkCreateInstance(&ici, NULL, &vk->inst) != VK_SUCCESS) {
 		gLastError = @"vkCreateInstance failed";
 		return NO;
@@ -84,10 +89,12 @@ static BOOL A01VKLoad(A01VK *vk)
 	IFN(vkCreateImage); IFN(vkDestroyImage); IFN(vkGetImageMemoryRequirements); IFN(vkBindImageMemory); IFN(vkCreateImageView); IFN(vkDestroyImageView); IFN(vkCreateRenderPass); IFN(vkDestroyRenderPass); IFN(vkCreateFramebuffer); IFN(vkDestroyFramebuffer); IFN(vkCreateShaderModule); IFN(vkDestroyShaderModule); IFN(vkCreatePipelineLayout); IFN(vkDestroyPipelineLayout); IFN(vkCreateGraphicsPipelines); IFN(vkDestroyPipeline); IFN(vkCmdBeginRenderPass); IFN(vkCmdEndRenderPass); IFN(vkCmdBindPipeline); IFN(vkCmdDraw); IFN(vkCmdSetViewport); IFN(vkCmdSetScissor); IFN(vkCmdCopyImageToBuffer);
 #undef IFN
 	uint32_t n = 1;
+	STEP("vkEnumeratePhysicalDevices (abre a GPU)");
 	if (pvkEnumeratePhysicalDevices(vk->inst, &n, &vk->phys) < 0 || n == 0) {
 		gLastError = @"no Vulkan physical device (GE8100 kernel driver not ready)";
 		return NO;
 	}
+	STEP("propriedades da GPU");
 	pvkGetPhysicalDeviceProperties(vk->phys, &vk->props);
 	pvkGetPhysicalDeviceMemoryProperties(vk->phys, &vk->mem);
 	uint32_t nq = 8;
@@ -106,11 +113,13 @@ static BOOL A01VKLoad(A01VK *vk)
 	                                .queueFamilyIndex = vk->qfam, .queueCount = 1, .pQueuePriorities = &prio };
 	VkDeviceCreateInfo dci = { .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
 	                           .queueCreateInfoCount = 1, .pQueueCreateInfos = &qci };
+	STEP("vkCreateDevice");
 	if (pvkCreateDevice(vk->phys, &dci, NULL, &vk->dev) != VK_SUCCESS) {
 		gLastError = @"vkCreateDevice failed";
 		return NO;
 	}
 	pvkGetDeviceQueue(vk->dev, vk->qfam, 0, &vk->queue);
+	STEP("dispositivo pronto");
 	return YES;
 }
 
