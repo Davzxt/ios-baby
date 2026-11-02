@@ -5,6 +5,10 @@ name: metal-research
 # strings and symbol names around driver discovery. No Apple binary is stored or uploaded.
 
 on:
+  push:
+    branches: [a01core]
+    paths:
+      - ".github/workflows/metal-research.yml"
   workflow_dispatch:
     inputs:
       device:
@@ -27,7 +31,7 @@ jobs:
       - name: Extract the dyld shared cache (remote)
         run: |
           mkdir -p dsc && cd dsc
-          ipsw download ipsw --device "${{ inputs.device }}" --version "${{ inputs.version }}" --dyld -y \
+          ipsw download ipsw --device "${{ inputs.device || 'iPhone10,3' }}" --version "${{ inputs.version || '16.7.16' }}" --dyld -y \
             || { ipsw download ipsw --help | head -80; exit 1; }
           find . -name 'dyld_shared_cache_arm64*' | head
       - name: Metal driver discovery
