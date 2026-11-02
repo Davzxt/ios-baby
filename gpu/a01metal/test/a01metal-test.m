@@ -4,6 +4,7 @@
 //   TESTE 3: shader simples (pipeline SPIR-V desenha um triangulo verde, leitura dos pixels)
 // Output goes to /private/var/herolte/autorun.out; the kernel prints it at the next boot.
 #import "A01Metal.h"
+#include <objc/runtime.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -456,14 +457,42 @@ install_diagnostics(void)
  * phone, creating MTLTextureDescriptor / MTLRenderPassDescriptor blocked inside Metal.framework
  * (mach_msg, TESTE 2 hung for 120 s) while no system Metal device exists (GPU_DIAG). A01Metal
  * only reads these properties. */
-@interface A01TexDesc : NSObject
+/* Any other descriptor property A01Metal asks for answers 0 / nil (getters) or is ignored
+ * (setters), instead of an unrecognized-selector exception (the phone: -[A01TexDesc textureType]). */
+static id a01_plain_get(id self, SEL _cmd) { (void)self; (void)_cmd; return nil; }
+static void a01_plain_set(id self, SEL _cmd, id v) { (void)self; (void)_cmd; (void)v; }
+
+@interface A01PlainDesc : NSObject
+@end
+@implementation A01PlainDesc
++ (BOOL)resolveInstanceMethod:(SEL)sel
+{
+	const char *name = sel_getName(sel);
+	const char *colon = strchr(name, ':');
+	if (colon == NULL) {
+		return class_addMethod(self, sel, (IMP)a01_plain_get, "@@:");
+	}
+	if (colon[1] == '\0') {
+		return class_addMethod(self, sel, (IMP)a01_plain_set, "v@:@");
+	}
+	return [super resolveInstanceMethod:sel];
+}
+@end
+
+@interface A01TexDesc : A01PlainDesc
 @property (nonatomic) NSUInteger width, height;
 @property (nonatomic) MTLPixelFormat pixelFormat;
 @property (nonatomic) MTLTextureUsage usage;
 @end
 @implementation A01TexDesc
+- (MTLTextureType)textureType { return MTLTextureType2D; }
+- (NSUInteger)depth { return 1; }
+- (NSUInteger)mipmapLevelCount { return 1; }
+- (NSUInteger)sampleCount { return 1; }
+- (NSUInteger)arrayLength { return 1; }
+- (MTLStorageMode)storageMode { return MTLStorageModeShared; }
 @end
-@interface A01ColorAttachment : NSObject
+@interface A01ColorAttachment : A01PlainDesc
 @property (nonatomic, strong) id<MTLTexture> texture;
 @property (nonatomic) MTLLoadAction loadAction;
 @property (nonatomic) MTLStoreAction storeAction;
@@ -472,12 +501,12 @@ install_diagnostics(void)
 @end
 @implementation A01ColorAttachment
 @end
-@interface A01PassDesc : NSObject
+@interface A01PassDesc : A01PlainDesc
 @property (nonatomic, strong) NSArray<A01ColorAttachment *> *colorAttachments;
 @end
 @implementation A01PassDesc
 @end
-@interface A01PipeDesc : NSObject
+@interface A01PipeDesc : A01PlainDesc
 @property (nonatomic, strong) id<MTLFunction> vertexFunction, fragmentFunction;
 @property (nonatomic, strong) NSArray<A01ColorAttachment *> *colorAttachments;
 @end
