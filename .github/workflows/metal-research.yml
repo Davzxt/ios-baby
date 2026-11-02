@@ -22,7 +22,14 @@ jobs:
     timeout-minutes: 90
     steps:
       - name: Install ipsw
-        run: brew install blacktop/tap/ipsw && ipsw version
+        run: |
+          set -e
+          url=$(curl -sf https://api.github.com/repos/blacktop/ipsw/releases/latest | python3 -c "
+          import sys, json
+          a = [x['browser_download_url'] for x in json.load(sys.stdin)['assets']]
+          m = [u for u in a if 'macOS' in u and ('universal' in u or 'x86_64' in u) and u.endswith('.tar.gz') and 'frida' not in u]
+          print(m[0])")
+          echo "$url"; curl -sfL -o ipsw.tgz "$url" && tar xzf ipsw.tgz && sudo mv "$(find . -maxdepth 2 -name ipsw -type f | head -1)" /usr/local/bin/ipsw && ipsw version
       - name: Extract the dyld shared cache (remote)
         run: |
           mkdir -p dsc && cd dsc
