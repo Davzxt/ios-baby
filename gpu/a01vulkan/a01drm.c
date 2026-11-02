@@ -47,6 +47,7 @@ struct a01_srvkm_cmd {
 static pthread_mutex_t a01_lock = PTHREAD_MUTEX_INITIALIZER;
 static io_connect_t a01_conn = IO_OBJECT_NULL;
 static int a01_state;   /* 0 unknown, 1 connected, -1 no service */
+static int a01_conn_kr = 1;   /* 1 = not tried */
 
 static io_connect_t
 a01_connection(void)
@@ -75,7 +76,6 @@ a01_connection(void)
 #define A01_TRACE_N 8
 static struct { uint32_t kind, group, func; int32_t kr; uint64_t out; } a01_trace[A01_TRACE_N];
 static uint32_t a01_trace_count;
-static int a01_conn_kr = 1;   /* 1 = not tried */
 
 static void
 a01_trace_add(uint32_t kind, uint32_t group, uint32_t func, kern_return_t kr, uint64_t out)
