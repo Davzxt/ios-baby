@@ -79,3 +79,19 @@ struct vk_sync_type vk_drm_syncobj_get_type(int drm_fd)
 """
     f.write_text(t)
     print("pvr_drm.c: vk_drm_syncobj stubs for Darwin")
+
+# Mesa's Darwin build_id_find_nhdr_for_addr returns the Mach-O LC_UUID (16 bytes), while pvr wants an
+# ELF SHA-1 build-id (20) and fails vkCreateInstance ("Build-id too short"). copy_build_id_to_sha1
+# zero-pads shorter ids, so the 16-byte UUID is enough on Darwin.
+f = mesa / "src/imagination/vulkan/pvr_instance.c"
+t = f.read_text()
+old = "   if (build_id_len < BUILD_ID_EXPECTED_HASH_LENGTH) {"
+if old in t and "A01: Mach-O LC_UUID" not in t:
+    t = t.replace(old, """#if defined(__APPLE__) /* A01: Mach-O LC_UUID is 16 bytes */
+   if (build_id_len < 16) {
+#else
+""" + old + "\n#endif", 1)
+    f.write_text(t)
+    print("pvr_instance.c: 16-byte Mach-O UUID accepted as build-id")
+elif "A01: Mach-O LC_UUID" not in t:
+    raise SystemExit("pvr_instance.c: build-id length check not found")
