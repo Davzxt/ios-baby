@@ -175,3 +175,88 @@ if old in t and "A01: no timeline" not in t:
     print("pvr_srv_bridge.c: FORCE_SW_ONLY skipped without a timeline")
 elif "A01: no timeline" not in t:
     raise SystemExit("pvr_srv_bridge.c: FORCE_SW_ONLY ioctl not found")
+
+# GE8100 firmware command layouts. Its alignment checks (printed by the A01 kernel at boot) give
+# RGXFWIF_CMDTA 136 and RGXFWIF_CMD3D 336 bytes; img-pvr's DDK 1.11 structs, reverse-engineered on
+# a GE8320, are 128 and 328 (transfer 208 and compute 64 agree). The GE8100 firmware is built with
+# errata the GE8320's is not (BRN 60084, 61450, 63027, 65168, 65273). BRN 63027 adds the 64-bit
+# dummy region header register after the TA's partial-render fence (DDK 1.17 keeps it there);
+# the 3D one sits at the end of the 3D registers, before the flags, where DDK errata registers go:
+# the firmware then read hw_rt_data 8 bytes later, where img-pvr has a zero, and discarded every 3D
+# command ("Discarded cmd on DM3 (reason=0) HWRTData=0x00000000"). On Darwin each command is sent
+# with 8 zero bytes inserted at those offsets; A01_PVR_TA_PAD / A01_PVR_3D_PAD (byte offsets)
+# move them without a rebuild.
+f = mesa / "src/imagination/vulkan/winsys/pvrsrvkm/pvr_arch_srv_job_render.c"
+t = f.read_text()
+if "A01: GE8100 command layout" not in t:
+    helper = """
+#if defined(__APPLE__) /* A01: GE8100 command layout (TA 136, 3D 336 bytes) */
+#include <stdlib.h>
+static uint32_t
+a01_pad_at(const char *env, uint32_t dflt, uint32_t size)
+{
+   const char *e = getenv(env);
+   uint32_t v = e ? (uint32_t)strtoul(e, NULL, 0) : dflt;
+   return v <= size ? v : dflt;
+}
+
+static void
+a01_insert8(uint8_t *dst, const void *src, uint32_t size, uint32_t at)
+{
+   memcpy(dst, src, at);
+   memset(dst + at, 0, 8);
+   memcpy(dst + at + 8, (const uint8_t *)src + at, size - at);
+}
+#endif
+"""
+    anchor = "\nstatic void srv_geometry_cmd_init("
+    if anchor not in t:
+        anchor = "\nstatic void\nsrv_geometry_cmd_init("
+    if anchor not in t:
+        raise SystemExit("pvr_arch_srv_job_render.c: srv_geometry_cmd_init not found")
+    t = t.replace(anchor, helper + anchor, 1)
+
+    old = "   do {\n      /* The fw allows the ZS and MSAA scratch buffers to be lazily allocated in\n"
+    if t.count(old) != 1:
+        raise SystemExit("pvr_arch_srv_job_render.c: kick loop not found")
+    pad = """#if defined(__APPLE__)
+   uint8_t a01_geom[sizeof(geom_cmd) + 8], a01_pr[sizeof(pr_cmd) + 8], a01_frag[sizeof(frag_cmd) + 8];
+   {
+      const uint32_t ta_at = a01_pad_at("A01_PVR_TA_PAD",
+         offsetof(struct ddk111_fwif_cmd_ta, partial_render_ta_3d_fence) + 8, sizeof(geom_cmd));
+      const uint32_t f_at = a01_pad_at("A01_PVR_3D_PAD",
+         offsetof(struct ddk111_fwif_cmd_3d, flags), sizeof(pr_cmd));
+      a01_insert8(a01_geom, &geom_cmd, sizeof(geom_cmd), ta_at);
+      a01_insert8(a01_pr, &pr_cmd, sizeof(pr_cmd), f_at);
+      if (frag_cmd_ptr) {
+         a01_insert8(a01_frag, frag_cmd_ptr, frag_cmd_size, f_at);
+         frag_cmd_ptr = a01_frag;
+         frag_cmd_size += 8;
+      }
+   }
+#endif
+"""
+    t = t.replace(old, pad + old, 1)
+
+    old = """                                        sizeof(geom_cmd),
+                                        (uint8_t *)&geom_cmd,
+                                        sizeof(pr_cmd),
+                                        (uint8_t *)&pr_cmd,
+"""
+    new = """#if defined(__APPLE__)
+                                        sizeof(a01_geom),
+                                        a01_geom,
+                                        sizeof(a01_pr),
+                                        a01_pr,
+#else
+                                        sizeof(geom_cmd),
+                                        (uint8_t *)&geom_cmd,
+                                        sizeof(pr_cmd),
+                                        (uint8_t *)&pr_cmd,
+#endif
+"""
+    if t.count(old) != 1:
+        raise SystemExit("pvr_arch_srv_job_render.c: kick arguments not found")
+    t = t.replace(old, new, 1)
+    f.write_text(t)
+    print("pvr_arch_srv_job_render.c: TA/3D commands padded to the GE8100 firmware layout")
