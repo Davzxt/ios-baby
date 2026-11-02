@@ -69,8 +69,13 @@ snapshot(const char *state, int locked)
 		memcpy(buf + n, g_log, g_len);
 		n += g_len;
 	}
-	ftruncate(g_out, 0);
-	pwrite(g_out, buf, n, 0);
+	/* The phone is usually reset by force (the HFS journal is replayed at the next boot), so
+	 * the file must be on disk at every moment: always the same size, overwritten in place
+	 * (NUL padding ends the text for the kernel's report) and fsync'd. Truncating and then
+	 * writing left an empty file after a forced reset. */
+	memset(buf + n, 0, sizeof(buf) - n);
+	pwrite(g_out, buf, sizeof(buf), 0);
+	fsync(g_out);
 	if (!locked) {
 		pthread_mutex_unlock(&g_mx);
 	}
@@ -157,6 +162,7 @@ static void
 install_diagnostics(void)
 {
 	g_t0 = time(NULL);
+	ftruncate(g_out, 0);   /* once: drop earlier runs; every later write is in place + fsync */
 	int p[2];
 	if (pipe(p) == 0) {
 		dup2(p[1], STDERR_FILENO);
