@@ -151,3 +151,27 @@ if "A01: one SPM load shader" not in t:
     t = t.replace(old, "#if defined(__APPLE__)\n   ralloc_free(shaders[0]);   /* A01: the one shared shader */\n#else\n" + old + "#endif\n", 1)
     f.write_text(t)
     print("pvr_arch_spm.c: one SPM load shader on Darwin")
+
+# Timelines: DDK 1.11 creates them by opening Linux's /dev/pvr_sync, which XNU does not have; the
+# failed open made vkCreateDevice return VK_ERROR_UNKNOWN when the queues' contexts were created
+# (phone: VkResult -13 with no bridge error). On Darwin a context gets no timeline (-1, the DDK's
+# PVRSRV_NO_TIMELINE): kicks then return no fence and Mesa treats the job's sync as signalled.
+# Completion is not tracked by fences yet (A01Metal waits after a submit).
+f = mesa / "src/imagination/vulkan/winsys/pvrsrvkm/pvr_srv_job_common.c"
+t = f.read_text()
+old = '   fd = open("/dev/pvr_sync", O_CLOEXEC | O_RDWR);\n'
+if old in t and "A01: no /dev/pvr_sync" not in t:
+    t = t.replace(old, '#if defined(__APPLE__) /* A01: no /dev/pvr_sync on XNU */\n   *fd_out = -1;\n   return VK_SUCCESS;\n#endif\n' + old, 1)
+    f.write_text(t)
+    print("pvr_srv_job_common.c: no timelines on Darwin")
+elif "A01: no /dev/pvr_sync" not in t:
+    raise SystemExit("pvr_srv_job_common.c: /dev/pvr_sync open not found")
+f = mesa / "src/imagination/vulkan/winsys/pvrsrvkm/pvr_srv_bridge.c"
+t = f.read_text()
+old = "   if (ioctl(sw_timeline_fd, _IO('W', 5)) < 0) {\n"
+if old in t and "A01: no timeline" not in t:
+    t = t.replace(old, "   if (sw_timeline_fd < 0) /* A01: no timeline on XNU */\n      return VK_SUCCESS;\n" + old, 1)
+    f.write_text(t)
+    print("pvr_srv_bridge.c: FORCE_SW_ONLY skipped without a timeline")
+elif "A01: no timeline" not in t:
+    raise SystemExit("pvr_srv_bridge.c: FORCE_SW_ONLY ioctl not found")

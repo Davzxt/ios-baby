@@ -8,6 +8,7 @@
 #import "A01Metal.h"
 #include <vulkan/vulkan.h>
 #include <dlfcn.h>
+#include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -690,6 +691,11 @@ a01_render_pass(A01VK *vk, VkFormat fmt, VkAttachmentLoadOp load)
 {
 	if (_status != MTLCommandBufferStatusCommitted) return;
 	VkResult r = pvkWaitForFences(_vk->dev, 1, &_fence, VK_TRUE, UINT64_MAX);
+	/* XNU has no DDK timelines yet (no /dev/pvr_sync), so the driver reports every job as done at
+	 * submit. Until the kernel signals completion, give the GPU time to finish before the CPU reads
+	 * the results (A01METAL_SETTLE_MS, default 300). */
+	const char *settle = getenv("A01METAL_SETTLE_MS");
+	usleep((useconds_t)(settle ? atoi(settle) : 300) * 1000);
 	_status = (r == VK_SUCCESS) ? MTLCommandBufferStatusCompleted : MTLCommandBufferStatusError;
 	if (r != VK_SUCCESS) _error = A01Err([NSString stringWithFormat:@"fence wait failed (%d)", r]);
 	for (MTLCommandBufferHandler h in _completed) h(self);
