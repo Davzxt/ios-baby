@@ -139,3 +139,4 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 - Drop (9 entries): A01Metal.bundle, libvulkan_powervr, libdrm, libA01Metal, `/private/var/herolte/autorun` = a01metal-test (TESTE 1 copy, TESTE 2 texture+render pass, TESTE 3 SPIR-V triangle).
 - Packages: GPU_DDK md5 1d8096efd1e27277e6ed2fb4a9f3ab51, GPU_METAL_UI md5 2837d08e8e4fb360ecfc2af8a984f9a6 (Odin trailer verified).
 - Not yet run on device: no test result recorded yet.
+- Device: with the 0327 GPU packages (no `serial=3`) the screen stayed on but black. On this port `serial=3` is what draws the text console on the framebuffer, so removing it hid all text; not a sign of a crash. Rebuilt with `serial=3` (still without `debug=0xc`): GPU_DDK md5 069e4a1c59e22793d826b45a142712e3, GPU_METAL_UI md5 463fc6d408f873f47c0ff88812896847.
