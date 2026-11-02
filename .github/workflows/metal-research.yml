@@ -18,16 +18,11 @@ on:
 
 jobs:
   research:
-    runs-on: ubuntu-latest
+    runs-on: macos-15-intel   # mounts the APFS system DMG natively
     timeout-minutes: 90
     steps:
       - name: Install ipsw
-        run: |
-          set -e
-          tag=$(curl -sf https://api.github.com/repos/blacktop/ipsw/releases/latest | python3 -c "import sys,json;print(json.load(sys.stdin)['tag_name'])")
-          ver=${tag#v}
-          curl -sfL -o ipsw.tgz "https://github.com/blacktop/ipsw/releases/download/$tag/ipsw_${ver}_linux_x86_64.tar.gz"
-          tar xzf ipsw.tgz ipsw && sudo mv ipsw /usr/local/bin/ && ipsw version
+        run: brew install blacktop/tap/ipsw && ipsw version
       - name: Extract the dyld shared cache (remote)
         run: |
           mkdir -p dsc && cd dsc
