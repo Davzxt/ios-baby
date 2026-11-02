@@ -99,11 +99,23 @@ a01_trace_end(uint32_t i, kern_return_t kr, uint64_t out)
 	a01_trace[i].kr = kr;
 }
 
+/* the first bridge call whose reply carried an error, "" if none (a01metal-test's verdict) */
+static char a01_first_err[96];
+
+const char *
+a01drm_first_error(void)
+{
+	return a01_first_err;
+}
+
 void
 a01drm_trace_dump(FILE *f)
 {
 	fprintf(f, "a01drm: conexao A01CoreGPU %s (kr %d), %u chamadas\n",
 	        a01_state == 1 ? "aberta" : a01_state == 0 ? "nao tentada" : "FALHOU", a01_conn_kr, a01_trace_count);
+	if (a01_first_err[0] != '\0') {
+		fprintf(f, "a01drm: primeiro erro: %s\n", a01_first_err);
+	}
 	uint32_t n = a01_trace_count < A01_TRACE_N ? a01_trace_count : A01_TRACE_N;
 	for (uint32_t k = 0; k < n; k++) {
 		uint32_t i = (a01_trace_count - n + k) % A01_TRACE_N;
@@ -188,6 +200,16 @@ drmIoctl(int fd, unsigned long request, void *arg)
 	uint32_t slot = a01_trace_begin(0, cmd->bridge_id, cmd->bridge_func_id);
 	kern_return_t kr = IOConnectCallScalarMethod(c, 0, in, 6, out, &n);
 	a01_trace_end(slot, kr, out[0]);
+	/* every DDK 1.11 bridge reply ends with its PVRSRV_ERROR: keep the first call that failed */
+	if (kr == KERN_SUCCESS && out[0] == 0 && a01_first_err[0] == '\0' && cmd->out_data_size >= 4 &&
+	    cmd->out_data_ptr != 0) {
+		uint32_t e;
+		memcpy(&e, (const uint8_t *)(uintptr_t)cmd->out_data_ptr + cmd->out_data_size - 4, sizeof(e));
+		if (e != 0) {
+			snprintf(a01_first_err, sizeof(a01_first_err), "bridge %u/%u (chamada #%u) PVRSRV_ERROR %u",
+			         (unsigned)cmd->bridge_id, (unsigned)cmd->bridge_func_id, a01_trace_count, e);
+		}
+	}
 	/* MM PMRUNREFPMR (7) / PMRUNREFUNLOCKPMR (8), in = { hPMR }: the kernel drops the PMR and its
 	 * user mappings, so its cached CPU address is gone too */
 	if (cmd->bridge_id == 6 && (cmd->bridge_func_id == 7 || cmd->bridge_func_id == 8) &&

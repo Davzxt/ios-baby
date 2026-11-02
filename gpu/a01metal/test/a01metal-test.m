@@ -143,9 +143,13 @@ snapshot(const char *state, int locked)
 	if (strncmp(state, "fim OK", 6) == 0) {
 		n += (size_t)snprintf(buf + n, sizeof(buf) - n, "A01METAL: >>> RESULTADO: FUNCIONOU (3 de 3 testes OK) <<<\n");
 	} else if (strncmp(state, "fim", 3) == 0 || strncmp(state, "ERRO", 4) == 0) {
+		/* the first kernel call that answered with an error (a01drm), the most useful clue */
+		void *drm1 = dlopen("/private/var/a01/lib/libdrm.2.dylib", RTLD_NOLOAD | RTLD_LAZY);
+		const char *(*first)(void) = drm1 ? (const char *(*)(void))dlsym(drm1, "a01drm_first_error") : NULL;
+		const char *fe = first ? first() : NULL;
 		n += (size_t)snprintf(buf + n, sizeof(buf) - n,
-		                      "A01METAL: >>> RESULTADO: FALHOU (%s) em \"%s\": %s. MESA: %s. CODIGO: %s <<<\n",
-		                      state, A01MTLStep, g_err[0] ? g_err : "?", g_mesa, g_code);
+		                      "A01METAL: >>> RESULTADO: FALHOU (%s) em \"%s\": %s. KERNEL: %s. MESA: %s. CODIGO: %s <<<\n",
+		                      state, A01MTLStep, g_err[0] ? g_err : "?", fe && fe[0] ? fe : "-", g_mesa, g_code);
 	} else {
 		n += (size_t)snprintf(buf + n, sizeof(buf) - n, "A01METAL: >>> PAROU em \"%s\" depois de %ld s. CODIGO: %s <<<\n",
 		                      A01MTLStep, (long)(time(NULL) - g_t0), g_code);
