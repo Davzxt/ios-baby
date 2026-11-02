@@ -95,3 +95,26 @@ if old in t and "A01: Mach-O LC_UUID" not in t:
     print("pvr_instance.c: 16-byte Mach-O UUID accepted as build-id")
 elif "A01: Mach-O LC_UUID" not in t:
     raise SystemExit("pvr_instance.c: build-id length check not found")
+
+# CPU unmaps: the A01CoreGPU kernel keeps every user mapping of a PMR (IOMemoryMap) and removes it
+# when the PMR is freed. A munmap here first gives the range back to the task; malloc then reuses
+# it, and the kernel's later unmap destroys malloc's memory (on the phone: stuck in free() inside
+# vkCreateDevice). So the range stays mapped until the PMR goes; a01drm_map_pmr hands the same
+# address back if the BO is mapped again.
+f = mesa / "src/imagination/vulkan/winsys/pvrsrvkm/pvr_srv_bo.c"
+t = f.read_text()
+old = "   result = pvr_munmap(bo->map, bo->size, reserve);\n"
+new = """#if defined(__APPLE__)
+   /* A01: the kernel unmaps when the PMR is freed (see a01drm_map_pmr) */
+   (void)reserve;
+   result = VK_SUCCESS;
+#else
+   result = pvr_munmap(bo->map, bo->size, reserve);
+#endif
+"""
+if old in t and "A01: the kernel unmaps" not in t:
+    t = t.replace(old, new, 1)
+    f.write_text(t)
+    print("pvr_srv_bo.c: CPU unmap left to the kernel")
+elif "A01: the kernel unmaps" not in t:
+    raise SystemExit("pvr_srv_bo.c: munmap in buffer_unmap not found")

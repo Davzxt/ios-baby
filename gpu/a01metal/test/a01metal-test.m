@@ -10,6 +10,8 @@
 #include <signal.h>
 #include <dlfcn.h>
 #include <execinfo.h>
+#include <mach-o/dyld.h>
+#include <sys/ucontext.h>
 #include <pthread.h>
 #include <stdarg.h>
 #include <time.h>
@@ -42,7 +44,8 @@ static int g_console = -1;
  * where a run is stuck when it makes no more bridge calls. */
 static mach_port_t g_main_thread = MACH_PORT_NULL;
 static char g_where[420];
-static char g_code[64] = "?";   /* short "lib+offset" of the innermost GPU-stack frame, easy to type */
+static char g_code[140] = "?";   /* short "lib+offset" of the innermost GPU-stack frame, easy to type */
+static void refresh_images(void);
 
 static size_t
 where_frame(char *s, size_t room, uintptr_t a)
@@ -84,19 +87,24 @@ sample_main_thread(void)
 	thread_resume(g_main_thread);
 	char s[sizeof(g_where)];
 	size_t n = (size_t)snprintf(s, sizeof(s), "onde:");
-	int coded = 0;
+	/* CODIGO: where the CPU is (pc) and the innermost GPU-stack frame, e.g.
+	 * "libsystem_malloc+0x1a2b / libvulkan_powervr+0x188604" */
+	char pcf[64] = "", gpuf[64] = "";
 	for (int i = 0; i < na && n < sizeof(s) - 40; i++) {
 		size_t k = where_frame(s + n, sizeof(s) - n, a[i]);
-		if (!coded && (strstr(s + n, "vulkan") || strstr(s + n, "A01Metal") || strstr(s + n, "drm"))) {
-			snprintf(g_code, sizeof(g_code), "%s", s + n + 1);   /* skip the leading space */
-			char *dot = strstr(g_code, ".dylib");
+		char *f = i == 0 ? pcf : (gpuf[0] == '\0' && (strstr(s + n, "vulkan") || strstr(s + n, "A01Metal") ||
+		                                               strstr(s + n, "drm"))) ? gpuf : NULL;
+		if (f != NULL) {
+			snprintf(f, 64, "%s", s + n + 1);   /* skip the leading space */
+			char *dot = strstr(f, ".dylib");
 			if (dot) {
-				memmove(dot, dot + 6, strlen(dot + 6) + 1);   /* libvulkan_powervr+0x1234 */
+				memmove(dot, dot + 6, strlen(dot + 6) + 1);
 			}
-			coded = 1;
 		}
 		n += k;
 	}
+	snprintf(g_code, sizeof(g_code), "%s%s%s", pcf, gpuf[0] && strcmp(pcf, gpuf) ? " / " : "",
+	         strcmp(pcf, gpuf) ? gpuf : "");
 	snprintf(s + n, sizeof(s) - n, "\n");
 	memcpy(g_where, s, sizeof(g_where));
 }
@@ -210,6 +218,7 @@ watcher(void *arg)
 		}
 		sleep(1);
 		if (t % 5 == 0) {
+			refresh_images();
 			sample_main_thread();
 		}
 		snapshot(g_state, 0);
@@ -259,46 +268,116 @@ stderr_reader(void *arg)
 	return NULL;
 }
 
+/* Loaded images (base, short name), refreshed by the watcher: the crash handler maps addresses to
+ * lib+offset without dladdr, which takes dyld's lock. */
+#define A01_IMAGES 640
+static struct { uintptr_t base; const char *name; } g_img[A01_IMAGES];
+static volatile unsigned g_nimg;
+
+static void
+refresh_images(void)
+{
+	uint32_t n = _dyld_image_count();
+	unsigned k = 0;
+	for (uint32_t i = 0; i < n && k < A01_IMAGES; i++) {
+		const char *p = _dyld_get_image_name(i);
+		const struct mach_header *h = _dyld_get_image_header(i);
+		if (p == NULL || h == NULL) {
+			continue;
+		}
+		const char *s = strrchr(p, '/');
+		g_img[k].base = (uintptr_t)h;
+		g_img[k].name = s ? s + 1 : p;
+		k++;
+	}
+	g_nimg = k;
+}
+
+/* async-signal-safe text building: no malloc, no locks */
+static size_t
+put_str(char *b, size_t at, size_t cap, const char *s)
+{
+	while (*s && at + 1 < cap) {
+		b[at++] = *s++;
+	}
+	b[at] = '\0';
+	return at;
+}
+
+static size_t
+put_hex(char *b, size_t at, size_t cap, uintptr_t v)
+{
+	char t[20];
+	int n = 0;
+	do {
+		t[n++] = "0123456789abcdef"[v & 15];
+		v >>= 4;
+	} while (v && n < 16);
+	at = put_str(b, at, cap, "0x");
+	while (n > 0 && at + 1 < cap) {
+		b[at++] = t[--n];
+	}
+	b[at] = '\0';
+	return at;
+}
+
+static size_t
+put_addr(char *b, size_t at, size_t cap, uintptr_t a)
+{
+	unsigned best = A01_IMAGES;
+	for (unsigned i = 0; i < g_nimg; i++) {
+		if (g_img[i].base <= a && (best == A01_IMAGES || g_img[i].base > g_img[best].base)) {
+			best = i;
+		}
+	}
+	if (best == A01_IMAGES) {
+		return put_hex(b, at, cap, a);
+	}
+	const char *nm = g_img[best].name;
+	while (*nm && *nm != '.' && at + 1 < cap) {   /* "libvulkan_powervr.dylib" -> "libvulkan_powervr" */
+		b[at++] = *nm++;
+	}
+	b[at] = '\0';
+	at = put_str(b, at, cap, "+");
+	return put_hex(b, at, cap, a - g_img[best].base);
+}
+
 static void
 crash_handler(int sig, siginfo_t *si, void *ctx)
 {
-	(void)ctx;
-	char state[160];
+	/* Only async-signal-safe work: a crash inside malloc (the last one was stuck in free()) must
+	 * not deadlock here. The verdict line goes in place at the top of autorun.out (fsync'd) and to
+	 * the console; the kernel shows it live (0328) and at the next boot. */
+	static char line[600];
+	size_t n = 0;
+	n = put_str(line, n, sizeof(line), "A01METAL: >>> RESULTADO: FALHOU - ");
 	if (sig == SIGALRM) {
-		snprintf(state, sizeof(state), "ERRO: TRAVOU %d s", A01_HANG_SECONDS);
+		n = put_str(line, n, sizeof(line), "TRAVOU 120 s");
 	} else {
-		snprintf(state, sizeof(state), "ERRO: CAIU sinal %d (%s) end %p", sig, strsignal(sig), si ? si->si_addr : NULL);
+		n = put_str(line, n, sizeof(line), "CAIU sinal ");
+		n = put_hex(line, n, sizeof(line), (uintptr_t)sig);
+		n = put_str(line, n, sizeof(line), " end ");
+		n = put_hex(line, n, sizeof(line), si ? (uintptr_t)si->si_addr : 0);
 	}
-	int locked = pthread_mutex_trylock(&g_mx) == 0;
-	size_t bt0 = g_len;
-	int coded = 0;
-	void *frames[10];
-	int n = backtrace(frames, 10);
-	for (int i = 2; i < n && g_len < sizeof(g_log) - 80; i++) {   /* skip this handler and the trampoline */
-		Dl_info di;
-		const char *lib = "?", *sym = "?";
-		unsigned long off = (unsigned long)frames[i];
-		if (dladdr(frames[i], &di) && di.dli_fname) {
-			lib = strrchr(di.dli_fname, '/') ? strrchr(di.dli_fname, '/') + 1 : di.dli_fname;
-			off = (unsigned long)((char *)frames[i] - (char *)di.dli_fbase);
-			sym = di.dli_sname ? di.dli_sname : "?";
-		}
-		g_len += (size_t)snprintf(g_log + g_len, sizeof(g_log) - g_len, " %s+0x%lx %s\n", lib, off, sym);
-		/* the crashing GPU-stack frame becomes the code to type */
-		if (!coded && (strstr(lib, "vulkan") || strstr(lib, "A01Metal") || strstr(lib, "drm"))) {
-			const char *dot = strstr(lib, ".dylib");
-			int len = dot ? (int)(dot - lib) : (int)strlen(lib);
-			snprintf(g_code, sizeof(g_code), "%.*s+0x%lx", len, lib, off);
-			coded = 1;
-		}
+	n = put_str(line, n, sizeof(line), " em \"");
+	n = put_str(line, n, sizeof(line), A01MTLStep);
+	n = put_str(line, n, sizeof(line), "\". CODIGO: ");
+	ucontext_t *uc = ctx;
+	if (sig != SIGALRM && uc != NULL && uc->uc_mcontext != NULL) {
+		n = put_str(line, n, sizeof(line), "pc=");
+		n = put_addr(line, n, sizeof(line), (uintptr_t)arm_thread_state64_get_pc(uc->uc_mcontext->__ss));
+		n = put_str(line, n, sizeof(line), " lr=");
+		n = put_addr(line, n, sizeof(line), (uintptr_t)arm_thread_state64_get_lr(uc->uc_mcontext->__ss));
+	} else {
+		n = put_str(line, n, sizeof(line), g_code);
 	}
-	snapshot(state, 1);
-	char line[300];
-	int ln = snprintf(line, sizeof(line), "A01METAL: >>> RESULTADO: FALHOU - %s em \"%s\". CODIGO: %s <<<\n", state,
-	                  A01MTLStep, g_code);
-	console_write(line, ln > 0 ? (size_t)MIN((size_t)ln, sizeof(line) - 1) : 0);
-	console_write(g_log + bt0, g_len - bt0);   /* the backtrace */
-	(void)locked;
+	n = put_str(line, n, sizeof(line), " <<<\n");
+	/* the verdict replaces the first line; NUL-padding ends the text for the kernel's report */
+	static char pad[64];
+	pwrite(g_out, line, n, 0);
+	pwrite(g_out, pad, sizeof(pad), (off_t)n);
+	fsync(g_out);
+	console_write(line, n);
 	_exit(100 + sig);
 }
 

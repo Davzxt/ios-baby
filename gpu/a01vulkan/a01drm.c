@@ -120,6 +120,54 @@ a01drm_trace_dump(FILE *f)
 	}
 }
 
+/* CPU mappings of PMRs, by PMR handle. The kernel (A01CoreGPU) owns each mapping and removes it
+ * when the PMR is freed; userland must never munmap it (malloc would reuse the range and the
+ * kernel's later unmap would destroy malloc's memory). */
+#define A01_MAPS 1024
+static struct { uint64_t pmr; void *addr; } a01_maps[A01_MAPS];
+static pthread_mutex_t a01_maps_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static void *
+a01_map_lookup(uint64_t pmr)
+{
+	void *a = NULL;
+	pthread_mutex_lock(&a01_maps_lock);
+	for (unsigned i = 0; i < A01_MAPS; i++) {
+		if (a01_maps[i].addr != NULL && a01_maps[i].pmr == pmr) {
+			a = a01_maps[i].addr;
+			break;
+		}
+	}
+	pthread_mutex_unlock(&a01_maps_lock);
+	return a;
+}
+
+static void
+a01_map_remember(uint64_t pmr, void *addr)
+{
+	pthread_mutex_lock(&a01_maps_lock);
+	for (unsigned i = 0; i < A01_MAPS; i++) {
+		if (a01_maps[i].addr == NULL) {
+			a01_maps[i].pmr = pmr;
+			a01_maps[i].addr = addr;
+			break;
+		}
+	}
+	pthread_mutex_unlock(&a01_maps_lock);
+}
+
+static void
+a01_map_forget(uint64_t pmr)
+{
+	pthread_mutex_lock(&a01_maps_lock);
+	for (unsigned i = 0; i < A01_MAPS; i++) {
+		if (a01_maps[i].addr != NULL && a01_maps[i].pmr == pmr) {
+			a01_maps[i].addr = NULL;
+		}
+	}
+	pthread_mutex_unlock(&a01_maps_lock);
+}
+
 int
 drmIoctl(int fd, unsigned long request, void *arg)
 {
@@ -140,6 +188,12 @@ drmIoctl(int fd, unsigned long request, void *arg)
 	uint32_t slot = a01_trace_begin(0, cmd->bridge_id, cmd->bridge_func_id);
 	kern_return_t kr = IOConnectCallScalarMethod(c, 0, in, 6, out, &n);
 	a01_trace_end(slot, kr, out[0]);
+	/* MM PMRUNREFPMR (7) / PMRUNREFUNLOCKPMR (8), in = { hPMR }: the kernel drops the PMR and its
+	 * user mappings, so its cached CPU address is gone too */
+	if (cmd->bridge_id == 6 && (cmd->bridge_func_id == 7 || cmd->bridge_func_id == 8) &&
+	    cmd->in_data_size >= sizeof(uint64_t) && cmd->in_data_ptr != 0) {
+		a01_map_forget(*(const uint64_t *)(uintptr_t)cmd->in_data_ptr);
+	}
 	if (kr != KERN_SUCCESS || out[0] != 0) {   /* dispatch failure; per-call errors are in the out buffer */
 		errno = EINVAL;
 		return -1;
@@ -156,6 +210,12 @@ a01drm_map_pmr(int fd, uint64_t pmr_handle, void **map)
 	if (c == IO_OBJECT_NULL) {
 		return A01_NODEV;
 	}
+	/* one mapping per PMR, kept until the PMR is freed (patch-pvr-darwin.py: no munmap) */
+	void *cached = a01_map_lookup(pmr_handle);
+	if (cached != NULL) {
+		*map = cached;
+		return 0;
+	}
 	uint64_t in[1] = { pmr_handle }, out[2] = { 0, 0 };
 	uint32_t n = 2;
 	uint32_t slot = a01_trace_begin(1, (uint32_t)pmr_handle, 0);
@@ -166,6 +226,7 @@ a01drm_map_pmr(int fd, uint64_t pmr_handle, void **map)
 		return -1;
 	}
 	*map = (void *)(uintptr_t)out[1];
+	a01_map_remember(pmr_handle, *map);
 	return 0;
 }
 
