@@ -210,6 +210,12 @@ OSSNPrintf(IMG_CHAR *pStr, size_t ui32Size, const IMG_CHAR *pszFormat, ...)
 	return n;
 }
 
+IMG_INT32
+OSVSNPrintf(IMG_CHAR *pStr, size_t ui32Size, const IMG_CHAR *pszFormat, va_list vaArgs)
+{
+	return vsnprintf(pStr, ui32Size, pszFormat, vaArgs);
+}
+
 IMG_UINT32
 OSVSScanf(IMG_CHAR *pStr, const IMG_CHAR *pszFormat, ...)
 {
