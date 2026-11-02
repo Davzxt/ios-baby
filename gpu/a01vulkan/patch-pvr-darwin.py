@@ -118,3 +118,36 @@ if old in t and "A01: the kernel unmaps" not in t:
     print("pvr_srv_bo.c: CPU unmap left to the kernel")
 elif "A01: the kernel unmaps" not in t:
     raise SystemExit("pvr_srv_bo.c: munmap in buffer_unmap not found")
+
+# vkCreateDevice compiles 20 SPM load shaders up front (2 sample modes x (3 output-reg counts +
+# 7 tile-buffer counts)). On the single A53 that alone took minutes (phone: sampled in
+# pvr_uscgen_spm_load -> pco_nir_opt). They only run when the parameter buffer overflows mid
+# render. On Darwin one shader, the widest single-sample one without tile buffers, fills every
+# slot.
+f = mesa / "src/imagination/vulkan/pvr_arch_spm.c"
+t = f.read_text()
+if "A01: one SPM load shader" not in t:
+    i = t.index("   for (unsigned is_multisampled = 0; is_multisampled <= 1; ++is_multisampled) {")
+    j = t.index("   result = pvr_bo_suballoc(&device->suballoc_usc,", i)
+    loops = t[i:j]
+    t = t[:i] + """#if defined(__APPLE__) /* A01: one SPM load shader for every slot */
+   props = (struct pvr_spm_load_props){
+      .output_reg_count = 4,
+      .tile_buffer_count = 0,
+      .is_multisampled = 0,
+   };
+   {
+      pco_shader *one = pvr_uscgen_spm_load(device->pdevice->pco_ctx, &props);
+      for (unsigned u = 0; u < ARRAY_SIZE(shaders); ++u) {
+         shaders[u] = one;
+         usc_allocation_size += pco_shader_binary_size(one);
+      }
+   }
+#else
+""" + loops + "#endif\n\n" + t[j:]
+    old = "   for (unsigned u = 0; u < ARRAY_SIZE(shaders); ++u)\n      ralloc_free(shaders[u]);\n"
+    if old not in t:
+        raise SystemExit("pvr_arch_spm.c: shader free loop not found")
+    t = t.replace(old, "#if defined(__APPLE__)\n   ralloc_free(shaders[0]);   /* A01: the one shared shader */\n#else\n" + old + "#endif\n", 1)
+    f.write_text(t)
+    print("pvr_arch_spm.c: one SPM load shader on Darwin")
