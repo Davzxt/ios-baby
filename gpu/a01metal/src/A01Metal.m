@@ -527,7 +527,7 @@ a01_register_plugin_class(void)
 	Method *ms = class_copyMethodList([A01MTLDeviceImpl class], &n);
 	for (unsigned int i = 0; i < n; i++) {
 		SEL s = method_getName(ms[i]);
-		if (s == @selector(init) || s == @selector(dealloc) || s == @selector(initWithAcceleratorPort:)) {
+		if (s == @selector(init) || s == NSSelectorFromString(@"dealloc") || s == @selector(initWithAcceleratorPort:)) {
 			continue;
 		}
 		/* override _MTLDevice's version: the call is forwarded to A01MTLDeviceImpl */
