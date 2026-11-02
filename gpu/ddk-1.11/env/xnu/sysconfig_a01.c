@@ -141,7 +141,10 @@ a01_lisr_poll(void *arg)
 	A01_LISR *l = arg;
 	while (!l->stop) {
 		(void)l->pfn(l->data);   /* RGX_LISRHandler reads the IRQ status itself */
-		OSWaitus(500);
+		/* Sleep, not OSWaitus: XNU's delay() spins for short intervals, and with cpus=1 this
+		 * kernel-priority thread then held the only CPU and starved userland (the GPU test sat
+		 * in vkCreateDevice for minutes, sampled at a different place each time). */
+		OSSleepms(1);
 	}
 }
 
