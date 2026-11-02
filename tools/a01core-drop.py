@@ -7,7 +7,8 @@
 
 DEST is relative to /private/var/a01/ (parent directories are added). --autorun DEST also
 installs /System/Library/LaunchDaemons/com.a01core.autorun.plist, which runs that program once
-per boot as root with its output on the console (launchd reads it from the next boot on).
+per boot as root; its output goes to /private/var/a01/autorun.txt, which the kernel prints
+early in the following boot (launchd reads it from the next boot on).
 Format (same as tools/herolte-drop.py): 32-byte header "HERODRP1" | u32 1 | u32 count |
 u64 bytes | u64 id, payload from byte 4096: u32 path length | u32 mode (0 = directory) |
 u64 size | path | data, each item 8-byte aligned. The id is a hash of the contents, so the
@@ -44,8 +45,8 @@ def main():
             "ProgramArguments": [PREFIX + a.autorun.strip("/")],
             "RunAtLoad": True,
             "UserName": "root",
-            "StandardOutPath": "/dev/console",
-            "StandardErrorPath": "/dev/console",
+            "StandardOutPath": PREFIX + "autorun.txt",
+            "StandardErrorPath": PREFIX + "autorun.txt",
             "EnvironmentVariables": env,
         }
         entries.append((PLIST, 0o644, plistlib.dumps(job, fmt=plistlib.FMT_XML)))
