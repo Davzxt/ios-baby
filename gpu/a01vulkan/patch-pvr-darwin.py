@@ -54,22 +54,28 @@ if old in t and "a01drm_map_pmr" not in t:
 elif "a01drm_map_pmr" not in t:
     raise SystemExit("pvr_srv_bo.c: mmap call not found")
 
-# vk_drm_syncobj.c is Linux-only, but the common runtime still references vk_drm_syncobj_finish
-# (vk_sync_type_is_drm_syncobj compares a type's finish hook with it). Left undefined, dyld refuses
-# to load the driver on iOS. No sync type uses it here, so an empty definition keeps the
-# comparison false. The asm label avoids clashing with the prototype in vk_drm_syncobj.h.
-f = mesa / "src/imagination/vulkan/pvr_device.c"
+# vk_drm_syncobj.c is Linux-only, but Mesa still references two of its functions: the common runtime
+# compares sync types with vk_drm_syncobj_finish, and the upstream-DRM winsys (pvr_drm.c, unused with
+# the srv backend) calls vk_drm_syncobj_get_type. Left undefined, dyld refuses to load the driver on
+# iOS. pvr_drm.c includes vk_drm_syncobj.h, so the definitions there use the real prototypes; the empty
+# sync type returned has no features, so nothing selects it.
+f = mesa / "src/imagination/vulkan/winsys/powervr/pvr_drm.c"
 t = f.read_text()
-if "a01_vk_drm_syncobj_finish" not in t:
+if "A01: Linux-only vk_drm_syncobj" not in t:
     t += """
-#if defined(__APPLE__)
-void a01_vk_drm_syncobj_finish(void *device, void *sync) __asm__("_vk_drm_syncobj_finish");
-void a01_vk_drm_syncobj_finish(void *device, void *sync)
+#if defined(__APPLE__) /* A01: Linux-only vk_drm_syncobj.c is not built on Darwin */
+void vk_drm_syncobj_finish(struct vk_device *device, struct vk_sync *sync)
 {
    (void)device;
    (void)sync;
 }
+
+struct vk_sync_type vk_drm_syncobj_get_type(int drm_fd)
+{
+   (void)drm_fd;
+   return (struct vk_sync_type){ 0 };
+}
 #endif
 """
     f.write_text(t)
-    print("pvr_device.c: vk_drm_syncobj_finish defined for Darwin")
+    print("pvr_drm.c: vk_drm_syncobj stubs for Darwin")
