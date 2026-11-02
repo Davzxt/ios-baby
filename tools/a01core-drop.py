@@ -19,6 +19,8 @@ import argparse, hashlib, os, pathlib, plistlib, struct, sys
 PREFIX = "/private/var/a01/"
 PLIST = "/System/Library/LaunchDaemons/com.a01core.autorun.plist"
 BUNDLE = "/System/Library/Extensions/A01Metal.bundle"
+# launchd job the iOS root already has (tools/herolte-tune-ios-root.sh); output in autorun.out
+AUTORUN = "/private/var/herolte/autorun"
 
 
 def main():
@@ -36,9 +38,12 @@ def main():
         mode = 0o755 if os.access(src, os.X_OK) or dest.strip("/") == a.autorun or data[:4] in (b"\xcf\xfa\xed\xfe",) else 0o644
         if dest.startswith("/"):
             # absolute: only the Metal plugin bundle (the kernel refuses anything else)
-            if not dest.startswith(BUNDLE + "/"):
-                sys.exit(f"{dest}: absolute destinations must be inside {BUNDLE}")
-            dirs.add(BUNDLE)
+            if dest == AUTORUN:
+                dirs.add("/private/var/herolte")
+            elif dest.startswith(BUNDLE + "/"):
+                dirs.add(BUNDLE)
+            else:
+                sys.exit(f"{dest}: absolute destinations must be {AUTORUN} or inside {BUNDLE}")
             entries.append((dest, mode, data))
             continue
         dest = dest.strip("/")

@@ -1,0 +1,44 @@
+From b6ebf7bc920904c7542798cf45a3a26fe88e283b Mon Sep 17 00:00:00 2001
+From: a01core <a01core@localhost>
+Date: Mon, 2 Nov 2026 09:53:53 -0300
+Subject: [PATCH] 0326 a01core: drop installs the test as the root's registered
+ autorun (com.herolte.autorun)
+
+---
+ bsd/dev/a01core_drop.c | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/bsd/dev/a01core_drop.c b/bsd/dev/a01core_drop.c
+index d13f208..a70beba 100644
+--- a/bsd/dev/a01core_drop.c
++++ b/bsd/dev/a01core_drop.c
+@@ -42,6 +42,9 @@ void a01core_drop_apply(void);
+ #define ADROP_PREFIX    "/private/var/a01/"
+ #define ADROP_PLIST     "/System/Library/LaunchDaemons/com.a01core.autorun.plist"
+ #define ADROP_BUNDLE    "/System/Library/Extensions/A01Metal.bundle"   /* the Metal plugin */
++/* the iOS root (tools/herolte-tune-ios-root.sh) registers com.herolte.autorun in launchd.plist:
++ * it runs this program once per boot, output in /private/var/herolte/autorun.out */
++#define ADROP_AUTORUN   "/private/var/herolte/autorun"
+ #define ADROP_MAX_PATH  255u
+ #define ADROP_ID_PATH   "/private/var/a01/.drop-id"
+ 
+@@ -203,6 +206,7 @@ adrop_install(void)
+ 		int error;
+ 		bool allowed = (strncmp(path, ADROP_PREFIX, strlen(ADROP_PREFIX)) == 0 && !adrop_has_dotdot(path)) ||
+ 		    strcmp(path, ADROP_PLIST) == 0 || strcmp(path, ADROP_BUNDLE) == 0 ||
++		    strcmp(path, "/private/var/herolte") == 0 || strcmp(path, ADROP_AUTORUN) == 0 ||
+ 		    (strncmp(path, ADROP_BUNDLE "/", strlen(ADROP_BUNDLE) + 1) == 0 && !adrop_has_dotdot(path));
+ 		if (!allowed) {
+ 			error = EPERM;
+@@ -282,7 +286,7 @@ a01core_drop_apply(void)
+ 	if (on && rootvnode != NULLVP) {
+ 		vfs_context_t ctx = vfs_context_kernel();
+ 		int shown = adrop_show("/private/var/a01/drop.txt", ctx);
+-		shown += adrop_show("/private/var/a01/autorun.txt", ctx);
++		shown += adrop_show("/private/var/herolte/autorun.out", ctx);
+ 		if (shown) {
+ 			printf("A01CORE REPORT: holding 15 s\n");
+ 			IOSleep(15000);
+-- 
+2.55.0.windows.5
+
