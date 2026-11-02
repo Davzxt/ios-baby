@@ -118,7 +118,7 @@ static int32_t A01VKMemType(A01VK *vk, uint32_t bits, VkMemoryPropertyFlags want
 	return -1;
 }
 
-@class A01MTLDevice;
+@class A01MTLDeviceImpl;
 
 /* ---- MTLBuffer -------------------------------------------------------------------------- */
 @interface A01MTLBuffer : NSObject <MTLBuffer>
@@ -126,7 +126,7 @@ static int32_t A01VKMemType(A01VK *vk, uint32_t bits, VkMemoryPropertyFlags want
 @end
 
 @implementation A01MTLBuffer {
-	A01MTLDevice *_dev;
+	A01MTLDeviceImpl *_dev;
 	A01VK *_vk;
 	VkDeviceMemory _mem;
 	void *_map;
@@ -135,7 +135,7 @@ static int32_t A01VKMemType(A01VK *vk, uint32_t bits, VkMemoryPropertyFlags want
 }
 @synthesize label;
 
-- (nullable instancetype)initWithDevice:(A01MTLDevice *)d vk:(A01VK *)vk length:(NSUInteger)len
+- (nullable instancetype)initWithDevice:(A01MTLDeviceImpl *)d vk:(A01VK *)vk length:(NSUInteger)len
                                 options:(MTLResourceOptions)o
 {
 	if (!(self = [super init])) return nil;
@@ -383,9 +383,9 @@ static int32_t A01VKMemType(A01VK *vk, uint32_t bits, VkMemoryPropertyFlags want
 @end
 
 /* ---- MTLDevice -------------------------------------------------------------------------- */
-@interface A01MTLDevice : NSObject <MTLDevice>
+@interface A01MTLDeviceImpl : NSObject <MTLDevice>
 @end
-@implementation A01MTLDevice {
+@implementation A01MTLDeviceImpl {
 	A01VK _vk;
 }
 
@@ -463,8 +463,76 @@ static int32_t A01VKMemType(A01VK *vk, uint32_t bits, VkMemoryPropertyFlags want
 
 id<MTLDevice> A01MTLCreateSystemDefaultDevice(void)
 {
-	static A01MTLDevice *dev;
+	static A01MTLDeviceImpl *dev;
 	static dispatch_once_t once;
-	dispatch_once(&once, ^{ dev = [A01MTLDevice new]; });
+	dispatch_once(&once, ^{ dev = [A01MTLDeviceImpl new]; });
 	return dev;
+}
+
+/* ---- Metal.framework plugin class ---------------------------------------------------------------
+ * Metal's getMetalPluginClassForService (iOS 16.7.16, docs/a01core-metal-research.md) loads
+ * /System/Library/Extensions/<MetalPluginName>.bundle, takes the class MetalPluginClassName names
+ * and accepts it only if it is a subclass of Metal's private _MTLDevice. That class has no public
+ * header, so "A01MTLDevice" is built at load time as a runtime subclass of _MTLDevice:
+ *  - -initWithAcceleratorPort: runs _MTLDevice's own initializer, then creates the Vulkan-backed
+ *    A01MTLDeviceImpl;
+ *  - every method A01MTLDeviceImpl implements is added to the subclass as a forwarding entry
+ *    (_objc_msgForward), and -forwardingTargetForSelector: hands the call to the implementation.
+ */
+#import <objc/runtime.h>
+#import <objc/message.h>
+
+static const void *kA01ImplKey = &kA01ImplKey;
+
+static id
+a01_forwarding_target(id self, SEL _cmd, SEL sel)
+{
+	(void)_cmd; (void)sel;
+	return objc_getAssociatedObject(self, kA01ImplKey);
+}
+
+static id
+a01_init_with_port(id self, SEL _cmd, unsigned int port)
+{
+	struct objc_super sup = { self, class_getSuperclass(object_getClass(self)) };
+	self = ((id (*)(struct objc_super *, SEL, unsigned int))objc_msgSendSuper)(&sup, _cmd, port);
+	if (self == nil) {
+		NSLog(@"A01Metal: _MTLDevice refused accelerator port %u", port);
+		return nil;
+	}
+	A01MTLDeviceImpl *impl = [A01MTLDeviceImpl new];
+	if (impl == nil) {
+		NSLog(@"A01Metal: no Vulkan device for Metal: %@", A01MTLLastError());
+		return nil;
+	}
+	objc_setAssociatedObject(self, kA01ImplKey, impl, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+	NSLog(@"A01Metal: Metal device ready on accelerator port %u (%@)", port, impl.name);
+	return self;
+}
+
+__attribute__((constructor)) static void
+a01_register_plugin_class(void)
+{
+	Class base = NSClassFromString(@"_MTLDevice");
+	if (base == Nil || NSClassFromString(@"A01MTLDevice") != Nil) {
+		return;   /* not inside Metal.framework's process, or already registered */
+	}
+	Class cls = objc_allocateClassPair(base, "A01MTLDevice", 0);
+	if (cls == Nil) {
+		return;
+	}
+	class_addMethod(cls, @selector(initWithAcceleratorPort:), (IMP)a01_init_with_port, "@@:I");
+	class_addMethod(cls, @selector(forwardingTargetForSelector:), (IMP)a01_forwarding_target, "@@::");
+	unsigned int n = 0;
+	Method *ms = class_copyMethodList([A01MTLDeviceImpl class], &n);
+	for (unsigned int i = 0; i < n; i++) {
+		SEL s = method_getName(ms[i]);
+		if (s == @selector(init) || s == @selector(dealloc) || s == @selector(initWithAcceleratorPort:)) {
+			continue;
+		}
+		/* override _MTLDevice's version: the call is forwarded to A01MTLDeviceImpl */
+		class_addMethod(cls, s, _objc_msgForward, method_getTypeEncoding(ms[i]));
+	}
+	free(ms);
+	objc_registerClassPair(cls);
 }

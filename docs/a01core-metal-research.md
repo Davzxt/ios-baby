@@ -68,3 +68,14 @@ Working model for the A01:
    `initWithAcceleratorPort:` on it and receives our MTLDevice (A01Metal on Vulkan).
 3. Still to read (disassembly of Metal's device creation): whether the class must subclass
    `MTLIOAccelDevice` / `_MTLDevice`, and which IOGPU kernel calls Metal makes before handing over.
+
+### getMetalPluginClassForService (disassembly, CI run 41444409178)
+
+1. `MetalPluginName` from the accelerator service -> `[NSBundle bundleWithPath:
+   @"/System/Library/Extensions/<name>.bundle"]`.
+2. `MetalPluginClassName` -> `[bundle classNamed:]`, else `[bundle principalClass]`.
+3. The class is used only if `[cls isSubclassOfClass:[_MTLDevice class]]`.
+`MTLCreateSystemDefaultDevice` returns the first entry of `_deviceArray` (filled once by
+`MTLDeviceArrayInitialize`) and refuses more than one device. A01Metal therefore registers
+`A01MTLDevice` at load time as a runtime subclass of `_MTLDevice` that forwards its MTLDevice
+methods to the Vulkan-backed implementation.
