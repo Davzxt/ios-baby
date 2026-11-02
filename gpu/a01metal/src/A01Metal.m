@@ -51,7 +51,8 @@ static BOOL A01VKLoad(A01VK *vk)
 	const char *path = getenv("A01METAL_VULKAN") ?: A01METAL_DEFAULT_VULKAN;
 	void *lib = dlopen(path, RTLD_NOW | RTLD_LOCAL);
 	if (!lib) {
-		gLastError = [NSString stringWithFormat:@"no Vulkan library at %s", path];
+		const char *why = dlerror();
+		gLastError = [NSString stringWithFormat:@"no Vulkan library at %s (%s)", path, why ? why : "?"];
 		return NO;
 	}
 	/* Mesa ICDs export vk_icdGetInstanceProcAddr; a loader exports vkGetInstanceProcAddr */

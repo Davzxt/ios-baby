@@ -104,3 +104,6 @@ strip -x "$OUT/libvulkan_powervr.dylib" || true
 cp drm-standin/libdrm.2.dylib "$OUT/" && codesign -s - -f "$OUT/libdrm.2.dylib"
 codesign -s - -f "$OUT/libvulkan_powervr.dylib"
 otool -L "$OUT/libvulkan_powervr.dylib"
+# dyld refuses the whole driver if a non-weak symbol is left to dynamic lookup and nothing defines it
+strong=$(nm -m "$OUT/libvulkan_powervr.dylib" | grep "dynamically looked up" | grep -v " weak " || true)
+if [ -n "$strong" ]; then echo "non-weak symbols left undefined:"; echo "$strong"; exit 1; fi
