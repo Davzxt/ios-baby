@@ -1,0 +1,95 @@
+From f03684c44d3b899ad2e085805db6d4884e18f0d6 Mon Sep 17 00:00:00 2001
+From: a01core <a01core@localhost>
+Date: Mon, 2 Nov 2026 09:22:07 -0300
+Subject: [PATCH] 0325 a01core: IOAcceleratorES with the A01Metal plugin
+ (boot-arg a01metal=1); drop may install A01Metal.bundle
+
+---
+ bsd/dev/a01core_drop.c          |  4 +++-
+ iokit/Kernel/arm/A01CoreGPU.cpp | 34 +++++++++++++++++++++++++++++++++
+ 2 files changed, 37 insertions(+), 1 deletion(-)
+
+diff --git a/bsd/dev/a01core_drop.c b/bsd/dev/a01core_drop.c
+index 46feaf2..d13f208 100644
+--- a/bsd/dev/a01core_drop.c
++++ b/bsd/dev/a01core_drop.c
+@@ -41,6 +41,7 @@ void a01core_drop_apply(void);
+ #define ADROP_DATA      4096u
+ #define ADROP_PREFIX    "/private/var/a01/"
+ #define ADROP_PLIST     "/System/Library/LaunchDaemons/com.a01core.autorun.plist"
++#define ADROP_BUNDLE    "/System/Library/Extensions/A01Metal.bundle"   /* the Metal plugin */
+ #define ADROP_MAX_PATH  255u
+ #define ADROP_ID_PATH   "/private/var/a01/.drop-id"
+ 
+@@ -201,7 +202,8 @@ adrop_install(void)
+ 		const uint8_t *d = adrop_at(data, e.size);
+ 		int error;
+ 		bool allowed = (strncmp(path, ADROP_PREFIX, strlen(ADROP_PREFIX)) == 0 && !adrop_has_dotdot(path)) ||
+-		    strcmp(path, ADROP_PLIST) == 0;
++		    strcmp(path, ADROP_PLIST) == 0 || strcmp(path, ADROP_BUNDLE) == 0 ||
++		    (strncmp(path, ADROP_BUNDLE "/", strlen(ADROP_BUNDLE) + 1) == 0 && !adrop_has_dotdot(path));
+ 		if (!allowed) {
+ 			error = EPERM;
+ 		} else if (e.mode == 0) {
+diff --git a/iokit/Kernel/arm/A01CoreGPU.cpp b/iokit/Kernel/arm/A01CoreGPU.cpp
+index d8e7711..ab1da3b 100644
+--- a/iokit/Kernel/arm/A01CoreGPU.cpp
++++ b/iokit/Kernel/arm/A01CoreGPU.cpp
+@@ -20,6 +20,7 @@
+ #include <IOKit/IOBufferMemoryDescriptor.h>
+ #include <kern/task.h>
+ #include <kern/thread.h>
++#include <pexpert/pexpert.h>
+ 
+ extern "C" {
+ int a01pvr_driver_init(void);
+@@ -137,6 +138,38 @@ a01pvr_selftest(void *arg, wait_result_t wr)
+ 	IOSleep(15000);   /* time to photograph the console */
+ }
+ 
++/*
++ * What iOS's Metal.framework looks for (docs/a01core-metal-research.md): an IOAcceleratorES whose
++ * MetalPluginName / MetalPluginClassName name the driver bundle in /System/Library/Extensions and
++ * the class it instantiates with initWithAcceleratorPort:. Boot-arg a01metal=1 publishes ours
++ * (A01Metal.bundle, class A01MTLDevice); off by default, so QuartzCore keeps its software path.
++ */
++class IOAcceleratorES : public IOService {
++	OSDeclareDefaultStructors(IOAcceleratorES);
++};
++
++OSDefineMetaClassAndStructors(IOAcceleratorES, IOService);
++
++static void
++a01_publish_metal(IOService *gpu)
++{
++	int on = 0;
++	PE_parse_boot_argn("a01metal", &on, sizeof(on));
++	if (!on) {
++		IOLog("A01CORE PVR: Metal plugin not published (boot-arg a01metal=1)\n");
++		return;
++	}
++	IOAcceleratorES *es = OSTypeAlloc(IOAcceleratorES);
++	if (es != NULL && es->init() && es->attach(gpu)) {
++		es->setProperty("MetalPluginName", "A01Metal");
++		es->setProperty("MetalPluginClassName", "A01MTLDevice");
++		es->setProperty(kIOUserClientClassKey, "A01CoreGPUUserClient");
++		es->registerService();
++		IOLog("A01CORE PVR: IOAcceleratorES published (MetalPluginName A01Metal, class A01MTLDevice)\n");
++	}
++	OSSafeReleaseNULL(es);
++}
++
+ /* ---- the service ---------------------------------------------------------------------------- */
+ class A01CoreGPU : public IOService {
+ 	OSDeclareDefaultStructors(A01CoreGPU);
+@@ -166,6 +199,7 @@ A01CoreGPU::start(IOService *provider)
+ 	setProperty("GPU", "PowerVR GE8100 (BVNC 22.49.21.16), DDK 1.11");
+ 	registerService();
+ 	IOLog("A01CORE PVR: A01CoreGPU registered\n");
++	a01_publish_metal(this);
+ 	/* Self-test: open one connection now, so the DDK loads and boots the firmware at boot
+ 	 * (PVRSRVDeviceInitialise) instead of at the first app. Off the boot thread. */
+ 	thread_t th;
+-- 
+2.55.0.windows.5
+

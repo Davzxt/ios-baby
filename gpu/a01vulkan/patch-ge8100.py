@@ -35,3 +35,16 @@ if "ge8100.h" not in t:
     t = t.replace(m.group(0), m.group(0) + f"\n{m.group(1)}CASE_PACKED_BVNC_DEVICE_INFO(22, 49, 21, 16);")
     tab.write_text(t)
 print("GE8100 added")
+
+# Processes that load the Metal plugin (SpringBoard, apps) cannot get
+# PVR_I_WANT_A_BROKEN_VULKAN_DRIVER in their environment, so the GE8100 is listed with img-pvr's
+# own bring-up entries. This does not make it conformant.
+pd = mesa / "src/imagination/vulkan/pvr_physical_device.c"
+if pd.exists():
+    t = pd.read_text()
+    anchor = "   case PVR_BVNC_PACK(22, 87, 104, 18):\n"
+    if anchor in t and "PVR_BVNC_PACK(22, 49, 21, 16)" not in t:
+        t = t.replace(anchor, anchor + "   /* A01 Core: GE8100 (22.49.21.16), DDK 1.11, bring-up only, not conformant */\n"
+                      "   case PVR_BVNC_PACK(22, 49, 21, 16):\n", 1)
+        pd.write_text(t)
+        print("pvr_physical_device.c: GE8100 loads without the env override")

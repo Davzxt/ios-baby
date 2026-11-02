@@ -396,6 +396,16 @@ static int32_t A01VKMemType(A01VK *vk, uint32_t bits, VkMemoryPropertyFlags want
 	return self;
 }
 
+/* Entry point Metal.framework uses for a driver bundle (MetalPluginClassName on the
+ * IOAcceleratorES service, docs/a01core-metal-research.md). The accelerator port is the
+ * A01CoreGPU service; the device itself goes through Vulkan and A01CoreGPU's user client. */
+- (nullable instancetype)initWithAcceleratorPort:(unsigned int)port
+{
+	(void)port;
+	NSLog(@"A01Metal: Metal.framework asked for a device (accelerator port %u)", port);
+	return [self init];
+}
+
 - (NSString *)name { return [NSString stringWithFormat:@"PowerVR %s (A01Metal)", _vk.props.deviceName]; }
 - (uint64_t)registryID { return 0xA01; }
 - (BOOL)isLowPower { return YES; }

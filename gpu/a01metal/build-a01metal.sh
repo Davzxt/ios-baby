@@ -14,3 +14,31 @@ $CC -framework Foundation -framework Metal "$HERE/test/a01metal-test.m" "$OUT/li
 codesign -f -s - "$OUT/libA01Metal.dylib" "$OUT/a01metal-test"
 rm -rf "$VKH"
 ls -la "$OUT"
+
+# The Metal driver bundle iOS loads (MetalPluginName A01Metal, class A01MTLDevice):
+# /System/Library/Extensions/A01Metal.bundle, installed by the A01 drop (tools/a01core-drop.py).
+B="$OUT/A01Metal.bundle"
+mkdir -p "$B"
+VKH="$OUT/Vulkan-Headers"
+[ -d "$VKH" ] || git clone -q --depth 1 --branch v1.3.290 https://github.com/KhronosGroup/Vulkan-Headers "$VKH"
+$CC -I"$VKH/include" -dynamiclib -install_name /System/Library/Extensions/A01Metal.bundle/A01Metal \
+    -framework Foundation -framework Metal "$HERE/src/A01Metal.m" -o "$B/A01Metal"
+cat > "$B/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleExecutable</key><string>A01Metal</string>
+	<key>CFBundleIdentifier</key><string>com.a01core.A01Metal</string>
+	<key>CFBundleName</key><string>A01Metal</string>
+	<key>CFBundlePackageType</key><string>BNDL</string>
+	<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+	<key>CFBundleShortVersionString</key><string>0.1</string>
+	<key>CFBundleVersion</key><string>1</string>
+	<key>NSPrincipalClass</key><string>A01MTLDevice</string>
+</dict>
+</plist>
+PLIST
+codesign -f -s - "$B/A01Metal"
+rm -rf "$VKH"
+ls -la "$B"

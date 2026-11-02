@@ -18,6 +18,7 @@ import argparse, hashlib, os, pathlib, plistlib, struct, sys
 
 PREFIX = "/private/var/a01/"
 PLIST = "/System/Library/LaunchDaemons/com.a01core.autorun.plist"
+BUNDLE = "/System/Library/Extensions/A01Metal.bundle"
 
 
 def main():
@@ -31,12 +32,19 @@ def main():
     entries, dirs = [], set()
     for item in a.items:
         dest, src = item.split("=", 1)
+        data = pathlib.Path(src).read_bytes()
+        mode = 0o755 if os.access(src, os.X_OK) or dest.strip("/") == a.autorun or data[:4] in (b"\xcf\xfa\xed\xfe",) else 0o644
+        if dest.startswith("/"):
+            # absolute: only the Metal plugin bundle (the kernel refuses anything else)
+            if not dest.startswith(BUNDLE + "/"):
+                sys.exit(f"{dest}: absolute destinations must be inside {BUNDLE}")
+            dirs.add(BUNDLE)
+            entries.append((dest, mode, data))
+            continue
         dest = dest.strip("/")
         parts = dest.split("/")
         for i in range(1, len(parts)):
             dirs.add(PREFIX + "/".join(parts[:i]))
-        data = pathlib.Path(src).read_bytes()
-        mode = 0o755 if os.access(src, os.X_OK) or dest == a.autorun or data[:4] in (b"\xcf\xfa\xed\xfe",) else 0o644
         entries.append((PREFIX + dest, mode, data))
     if a.autorun:
         env = dict(kv.split("=", 1) for kv in a.env)
