@@ -249,16 +249,25 @@ void
 _SrvInitParamGetUINT32BitField(void *pvState, const IMG_CHAR *pszBaseName, IMG_UINT32 uiDefault,
     const SRV_INIT_PARAM_UINT32_LOOKUP *psLookup, IMG_UINT32 uiSize, IMG_UINT32 *puiValue)
 {
-	(void)pvState; (void)pszBaseName; (void)psLookup; (void)uiSize;
+	(void)pvState; (void)psLookup; (void)uiSize;
 	*puiValue = uiDefault;
+	/* Firmware trace on, so the DDK's debug dump shows what the firmware did with each command
+	 * (the phone's dumps showed an all-zero trace and 3D work left "Ready"): MAIN, MTS, CSW, BIF,
+	 * POW and HWR groups. */
+	if (OSStringNCompare(pszBaseName, "EnableLogGroup", 15) == 0) {
+		*puiValue = 0x2U | 0x4U | 0x10U | 0x20U | 0x200U | 0x400U;
+	}
 }
 
 void
 _SrvInitParamGetUINT32List(void *pvState, const IMG_CHAR *pszName, IMG_UINT32 uiDefault,
     const SRV_INIT_PARAM_UINT32_LOOKUP *psLookup, IMG_UINT32 uiSize, IMG_UINT32 *puiValue)
 {
-	(void)pvState; (void)pszName; (void)psLookup; (void)uiSize;
+	(void)pvState; (void)psLookup; (void)uiSize;
 	*puiValue = uiDefault;
+	if (OSStringNCompare(pszName, "FirmwareLogType", 16) == 0) {
+		*puiValue = 2;   /* TRACE */
+	}
 }
 
 void

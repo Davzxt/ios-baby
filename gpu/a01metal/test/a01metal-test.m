@@ -452,6 +452,62 @@ install_diagnostics(void)
 
 #define STEP(s) (A01MTLStep = (s))
 
+/* The tests build their descriptors from these plain classes instead of Metal.framework's: on the
+ * phone, creating MTLTextureDescriptor / MTLRenderPassDescriptor blocked inside Metal.framework
+ * (mach_msg, TESTE 2 hung for 120 s) while no system Metal device exists (GPU_DIAG). A01Metal
+ * only reads these properties. */
+@interface A01TexDesc : NSObject
+@property (nonatomic) NSUInteger width, height;
+@property (nonatomic) MTLPixelFormat pixelFormat;
+@property (nonatomic) MTLTextureUsage usage;
+@end
+@implementation A01TexDesc
+@end
+@interface A01ColorAttachment : NSObject
+@property (nonatomic, strong) id<MTLTexture> texture;
+@property (nonatomic) MTLLoadAction loadAction;
+@property (nonatomic) MTLStoreAction storeAction;
+@property (nonatomic) MTLClearColor clearColor;
+@property (nonatomic) MTLPixelFormat pixelFormat;
+@end
+@implementation A01ColorAttachment
+@end
+@interface A01PassDesc : NSObject
+@property (nonatomic, strong) NSArray<A01ColorAttachment *> *colorAttachments;
+@end
+@implementation A01PassDesc
+@end
+@interface A01PipeDesc : NSObject
+@property (nonatomic, strong) id<MTLFunction> vertexFunction, fragmentFunction;
+@property (nonatomic, strong) NSArray<A01ColorAttachment *> *colorAttachments;
+@end
+@implementation A01PipeDesc
+@end
+
+static A01TexDesc *
+tex64(void)
+{
+	A01TexDesc *d = [A01TexDesc new];
+	d.width = 64;
+	d.height = 64;
+	d.pixelFormat = MTLPixelFormatRGBA8Unorm;
+	d.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+	return d;
+}
+
+static A01PassDesc *
+pass_clear(id<MTLTexture> t, double r, double g, double b)
+{
+	A01ColorAttachment *ca = [A01ColorAttachment new];
+	ca.texture = t;
+	ca.loadAction = MTLLoadActionClear;
+	ca.storeAction = MTLStoreActionStore;
+	ca.clearColor = MTLClearColorMake(r, g, b, 1);
+	A01PassDesc *d = [A01PassDesc new];
+	d.colorAttachments = @[ ca ];
+	return d;
+}
+
 static int
 check_pixels(id<MTLBuffer> b, unsigned w, unsigned h, uint8_t r, uint8_t g, uint8_t bl, uint8_t a, unsigned *bad_out)
 {
@@ -536,9 +592,7 @@ int main(int argc, char **argv)
 		STEP("TESTE 2 (textura + render pass)");
 		alarm(A01_HANG_SECONDS);
 		{
-			MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
-			                                                                               width:64 height:64 mipmapped:NO];
-			td.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+			MTLTextureDescriptor *td = (MTLTextureDescriptor *)tex64();
 			id<MTLTexture> t = [dev newTextureWithDescriptor:td];
 			id<MTLBuffer> out = [dev newBufferWithLength:64 * 64 * 4 options:MTLResourceStorageModeShared];
 			if (!t || !out) {
@@ -546,11 +600,7 @@ int main(int argc, char **argv)
 				failures++;
 			} else {
 				memset(out.contents, 0, 64 * 64 * 4);
-				MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
-				rp.colorAttachments[0].texture = t;
-				rp.colorAttachments[0].loadAction = MTLLoadActionClear;
-				rp.colorAttachments[0].storeAction = MTLStoreActionStore;
-				rp.colorAttachments[0].clearColor = MTLClearColorMake(1, 0, 0, 1);
+				MTLRenderPassDescriptor *rp = (MTLRenderPassDescriptor *)pass_clear(t, 1, 0, 0);
 				id<MTLCommandBuffer> cb = [q commandBuffer];
 				id<MTLRenderCommandEncoder> re = [cb renderCommandEncoderWithDescriptor:rp];
 				if (!re) {
@@ -583,13 +633,14 @@ int main(int argc, char **argv)
 			NSError *e = nil;
 			id<MTLLibrary> vl = [dev newLibraryWithData:(dispatch_data_t)[NSData dataWithBytes:tri_vert_spv length:sizeof(tri_vert_spv)] error:&e];
 			id<MTLLibrary> fl = [dev newLibraryWithData:(dispatch_data_t)[NSData dataWithBytes:tri_frag_spv length:sizeof(tri_frag_spv)] error:&e];
-			MTLRenderPipelineDescriptor *pd = [MTLRenderPipelineDescriptor new];
+			A01PipeDesc *pd = [A01PipeDesc new];
 			pd.vertexFunction = [vl newFunctionWithName:@"main"];
 			pd.fragmentFunction = [fl newFunctionWithName:@"main"];
-			pd.colorAttachments[0].pixelFormat = MTLPixelFormatRGBA8Unorm;
-			id<MTLRenderPipelineState> ps = [dev newRenderPipelineStateWithDescriptor:pd error:&e];
-			MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
-			                                                                               width:64 height:64 mipmapped:NO];
+			A01ColorAttachment *pca = [A01ColorAttachment new];
+			pca.pixelFormat = MTLPixelFormatRGBA8Unorm;
+			pd.colorAttachments = @[ pca ];
+			id<MTLRenderPipelineState> ps = [dev newRenderPipelineStateWithDescriptor:(MTLRenderPipelineDescriptor *)pd error:&e];
+			MTLTextureDescriptor *td = (MTLTextureDescriptor *)tex64();
 			id<MTLTexture> t = [dev newTextureWithDescriptor:td];
 			id<MTLBuffer> out = [dev newBufferWithLength:64 * 64 * 4 options:MTLResourceStorageModeShared];
 			if (!ps || !t || !out) {
@@ -597,11 +648,7 @@ int main(int argc, char **argv)
 				failures++;
 			} else {
 				memset(out.contents, 0, 64 * 64 * 4);
-				MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
-				rp.colorAttachments[0].texture = t;
-				rp.colorAttachments[0].loadAction = MTLLoadActionClear;
-				rp.colorAttachments[0].storeAction = MTLStoreActionStore;
-				rp.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 1);
+				MTLRenderPassDescriptor *rp = (MTLRenderPassDescriptor *)pass_clear(t, 0, 0, 0);
 				id<MTLCommandBuffer> cb = [q commandBuffer];
 				id<MTLRenderCommandEncoder> re = [cb renderCommandEncoderWithDescriptor:rp];
 				[re setRenderPipelineState:ps];
