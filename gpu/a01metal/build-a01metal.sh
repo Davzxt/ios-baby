@@ -7,7 +7,7 @@ VKH="$OUT/Vulkan-Headers"
 [ -d "$VKH" ] || git clone -q --depth 1 --branch v1.3.290 https://github.com/KhronosGroup/Vulkan-Headers "$VKH"
 SDK=$(xcrun --sdk iphoneos --show-sdk-path)
 CC="xcrun --sdk iphoneos clang -target arm64-apple-ios16.0 -isysroot $SDK -fobjc-arc -O2 -Wall -I$HERE/src -I$VKH/include"
-$CC -dynamiclib -install_name /usr/lib/libA01Metal.dylib -framework Foundation -framework Metal \
+$CC -dynamiclib -install_name /private/var/a01/lib/libA01Metal.dylib -framework Foundation -framework Metal \
     "$HERE/src/A01Metal.m" -o "$OUT/libA01Metal.dylib"
 $CC -framework Foundation -framework Metal "$HERE/test/a01metal-test.m" "$OUT/libA01Metal.dylib" \
     -o "$OUT/a01metal-test"

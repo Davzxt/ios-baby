@@ -98,7 +98,9 @@ ninja -C build -k 0
 cd ..
 lib=$(ls mesa/build/src/imagination/vulkan/libvulkan_powervr_mesa*.dylib | head -1)
 cp "$lib" "$OUT/libvulkan_powervr.dylib"
-install_name_tool -id /usr/lib/libvulkan_powervr.dylib "$OUT/libvulkan_powervr.dylib"
+# installed by the A01 drop under /private/var/a01/lib (tools/a01core-drop.py)
+install_name_tool -id /private/var/a01/lib/libvulkan_powervr.dylib -add_rpath /private/var/a01/lib "$OUT/libvulkan_powervr.dylib"
+strip -x "$OUT/libvulkan_powervr.dylib" || true
 cp drm-standin/libdrm.2.dylib "$OUT/" && codesign -s - -f "$OUT/libdrm.2.dylib"
 codesign -s - -f "$OUT/libvulkan_powervr.dylib"
 otool -L "$OUT/libvulkan_powervr.dylib"

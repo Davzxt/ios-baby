@@ -1,0 +1,344 @@
+From 2ca93758e0badfbf35072ed46c0b669880f09532 Mon Sep 17 00:00:00 2001
+From: a01core <a01core@localhost>
+Date: Mon, 2 Nov 2026 04:27:19 -0300
+Subject: [PATCH] 0322 a01core: boot-payload drop (A01Drop) and A01CoreGPU
+ failure hold
+
+---
+ bsd/conf/files                  |   1 +
+ bsd/dev/a01core_drop.c          | 262 ++++++++++++++++++++++++++++++++
+ bsd/kern/bsd_init.c             |   7 +
+ iokit/Kernel/arm/A01CoreGPU.cpp |   4 +-
+ 4 files changed, 273 insertions(+), 1 deletion(-)
+ create mode 100644 bsd/dev/a01core_drop.c
+
+diff --git a/bsd/conf/files b/bsd/conf/files
+index 575e321..7a2b510 100644
+--- a/bsd/conf/files
++++ b/bsd/conf/files
+@@ -119,6 +119,7 @@ bsd/dev/a01core_touch.c			standard
+ bsd/dev/a01core_power.c			standard
+ bsd/dev/a01core_i2c.c			standard
+ bsd/dev/a01core_gpu.c			standard
++bsd/dev/a01core_drop.c			standard
+ bsd/a01_pvr/pvr_devicemem_heapcfg.c			standard
+ bsd/a01_pvr/pvr_devicemem.c			standard
+ bsd/a01_pvr/pvr_devicemem_utils.c			standard
+diff --git a/bsd/dev/a01core_drop.c b/bsd/dev/a01core_drop.c
+new file mode 100644
+index 0000000..6dd9e4f
+--- /dev/null
++++ b/bsd/dev/a01core_drop.c
+@@ -0,0 +1,262 @@
++/*
++ * A01 Core drop: files for the iOS root carried in the boot payload, so test programs and
++ * libraries (the PowerVR Vulkan driver, the A01Metal test) reach the phone with a BOOT flash
++ * only. Port of bsd/dev/herolte_drop.c: same package, different source.
++ *
++ * tools/a01core-drop.py packs the files; mkpayload.py --blob A01Drop=PKG puts the package in
++ * the payload (/chosen/memory-map "A01Drop" = <phys, size>):
++ *   "HERODRP1" | u32 version 1 | u32 entry count | u64 bytes | u64 id   (header, 32 bytes,
++ *   then from byte 4096, back to back, 8-byte aligned:
++ *     u32 path length | u32 mode (0 = directory) | u64 size | path | data
++ * Allowed destinations: /private/var/a01/ and the one launchd job
++ * /System/Library/LaunchDaemons/com.a01core.autorun.plist (launchd_unsecure_cache=1 reads it
++ * from the next boot on). Once launchd has remounted the root read-write, every entry is
++ * written as root:wheel unless that package id is already installed. Boot-arg a01drop=0 skips.
++ */
++#include <sys/param.h>
++#include <sys/systm.h>
++#include <sys/errno.h>
++#include <sys/fcntl.h>
++#include <sys/stat.h>
++#include <sys/proc.h>
++#include <string.h>
++#include <sys/vnode_internal.h>
++#include <sys/namei.h>
++#include <sys/kauth.h>
++#include <sys/mount.h>
++#include <kern/kalloc.h>
++#include <kern/clock.h>
++#include <kern/thread.h>
++#include <pexpert/pexpert.h>
++#include <pexpert/device_tree.h>
++
++#if defined(ARM64_BOARD_CONFIG_A01CORE)
++extern vnode_t rootvnode;
++extern kern_return_t kernel_thread_start(thread_continue_t, void *, thread_t *);
++extern void thread_deallocate(thread_t);
++extern vm_offset_t ml_static_ptovirt(vm_offset_t);
++void a01core_drop_apply(void);
++
++#define ADROP_DATA      4096u
++#define ADROP_PREFIX    "/private/var/a01/"
++#define ADROP_PLIST     "/System/Library/LaunchDaemons/com.a01core.autorun.plist"
++#define ADROP_MAX_PATH  255u
++#define ADROP_ID_PATH   "/private/var/a01/.drop-id"
++
++struct adrop_header {
++	char     magic[8];
++	uint32_t version, count;
++	uint64_t bytes, id;
++};
++
++struct adrop_entry {
++	uint32_t path_len, mode;
++	uint64_t size;
++};
++
++static const uint8_t *adrop_pkg;   /* package in the payload */
++static uint64_t adrop_len;
++
++static const uint8_t *
++adrop_at(uint64_t off, uint64_t len)
++{
++	if (off + len < off || ADROP_DATA + off + len > adrop_len) {
++		return NULL;
++	}
++	return adrop_pkg + ADROP_DATA + off;
++}
++
++static bool
++adrop_has_dotdot(const char *path)
++{
++	for (const char *p = path; *p; p++) {
++		if (p[0] == '.' && p[1] == '.' && (p == path || p[-1] == '/') &&
++		    (p[2] == '/' || p[2] == '\0')) {
++			return true;
++		}
++	}
++	return false;
++}
++
++static int
++adrop_mkdir(const char *path, int mode, vfs_context_t ctx)
++{
++	struct nameidata nd;
++	NDINIT(&nd, CREATE, OP_MKDIR, LOCKPARENT | AUDITVNPATH1, UIO_SYSSPACE,
++	    CAST_USER_ADDR_T(path), ctx);
++	int error = namei(&nd);
++	if (error) {
++		return error;
++	}
++	vnode_t dvp = nd.ni_dvp, vp = nd.ni_vp;
++	if (vp == NULLVP) {
++		struct vnode_attr va;
++		VATTR_INIT(&va);
++		VATTR_SET(&va, va_type, VDIR);
++		VATTR_SET(&va, va_mode, mode & ALLPERMS);
++		error = vn_mkdir(dvp, &vp, &nd, &va, ctx);
++	}
++	nameidone(&nd);
++	if (vp != NULLVP) {
++		vnode_put(vp);
++	}
++	vnode_put(dvp);
++	return error;
++}
++
++static int
++adrop_file(const char *path, int mode, const uint8_t *data, uint64_t size, vfs_context_t ctx)
++{
++	vnode_t vp = NULLVP;
++	int error = vnode_open(path, FWRITE | O_CREAT | O_TRUNC, mode & ALLPERMS, 0, &vp, ctx);
++	if (error) {
++		return error;
++	}
++	struct vnode_attr va;
++	VATTR_INIT(&va);
++	VATTR_SET(&va, va_data_size, 0);
++	error = vnode_setattr(vp, &va, ctx);
++	for (uint64_t done = 0; done < size && !error;) {
++		uint32_t n = (uint32_t)MIN(size - done, (uint64_t)(1u << 20));
++		int resid = 0;
++		error = vn_rdwr(UIO_WRITE, vp, (caddr_t)(uintptr_t)(data + done), (int)n, (off_t)done,
++		    UIO_SYSSPACE, IO_UNIT, vfs_context_ucred(ctx), &resid, vfs_context_proc(ctx));
++		if (!error && resid) {
++			error = EIO;
++		}
++		done += n;
++	}
++	if (!error) {
++		VATTR_INIT(&va);
++		VATTR_SET(&va, va_mode, mode & ALLPERMS);
++		error = vnode_setattr(vp, &va, ctx);
++	}
++	vnode_close(vp, FWRITE, ctx);
++	return error;
++}
++
++static uint64_t
++adrop_installed_id(vfs_context_t ctx)
++{
++	vnode_t vp = NULLVP;
++	uint64_t id = 0;
++	int resid = 0;
++	if (vnode_open(ADROP_ID_PATH, FREAD, 0, 0, &vp, ctx) == 0) {
++		if (vn_rdwr(UIO_READ, vp, (caddr_t)&id, sizeof(id), 0, UIO_SYSSPACE, 0,
++		    vfs_context_ucred(ctx), &resid, vfs_context_proc(ctx)) != 0 || resid != 0) {
++			id = 0;
++		}
++		vnode_close(vp, FREAD, ctx);
++	}
++	return id;
++}
++
++static void
++adrop_set_installed_id(uint64_t id, vfs_context_t ctx)
++{
++	vnode_t vp = NULLVP;
++	int resid = 0;
++	if (vnode_open(ADROP_ID_PATH, FWRITE | O_CREAT | O_TRUNC, 0644, 0, &vp, ctx) == 0) {
++		(void)vn_rdwr(UIO_WRITE, vp, (caddr_t)&id, sizeof(id), 0, UIO_SYSSPACE, IO_UNIT,
++		    vfs_context_ucred(ctx), &resid, vfs_context_proc(ctx));
++		vnode_close(vp, FWRITE, ctx);
++	}
++}
++
++static void
++adrop_install(void)
++{
++	struct adrop_header h;
++	memcpy(&h, adrop_pkg, sizeof(h));
++	if (memcmp(h.magic, "HERODRP1", 8) != 0 || h.version != 1 || ADROP_DATA + h.bytes > adrop_len) {
++		printf("A01CORE DROP: bad package\n");
++		return;
++	}
++	vfs_context_t ctx = vfs_context_kernel();
++	(void)adrop_mkdir("/private/var/a01", 0755, ctx);
++	if (adrop_installed_id(ctx) == h.id) {
++		printf("A01CORE DROP: package %llu already installed\n", h.id);
++		return;
++	}
++	uint64_t off = 0;
++	unsigned files = 0, failed = 0;
++	char path[ADROP_MAX_PATH + 1];
++	for (uint32_t i = 0; i < h.count; i++) {
++		const uint8_t *p = adrop_at(off, sizeof(struct adrop_entry));
++		struct adrop_entry e;
++		if (p == NULL) {
++			failed++;
++			break;
++		}
++		memcpy(&e, p, sizeof(e));
++		if (e.path_len == 0 || e.path_len > ADROP_MAX_PATH || (p = adrop_at(off + sizeof(e), e.path_len)) == NULL) {
++			failed++;
++			break;
++		}
++		memcpy(path, p, e.path_len);
++		path[e.path_len] = '\0';
++		uint64_t data = off + ((sizeof(e) + e.path_len + 7) & ~7ull);
++		off = data + ((e.size + 7) & ~7ull);
++		const uint8_t *d = adrop_at(data, e.size);
++		int error;
++		bool allowed = (strncmp(path, ADROP_PREFIX, strlen(ADROP_PREFIX)) == 0 && !adrop_has_dotdot(path)) ||
++		    strcmp(path, ADROP_PLIST) == 0;
++		if (!allowed) {
++			error = EPERM;
++		} else if (e.mode == 0) {
++			error = adrop_mkdir(path, 0755, ctx);
++			error = error == EEXIST ? 0 : error;
++		} else if (d == NULL) {
++			error = EIO;
++		} else {
++			error = adrop_file(path, (int)e.mode, d, e.size, ctx);
++		}
++		if (error) {
++			failed++;
++			printf("A01CORE DROP: %s: error %d\n", path, error);
++		} else {
++			files++;
++		}
++	}
++	printf("A01CORE DROP: package %llu: %u entries written, %u failed\n", h.id, files, failed);
++	if (failed == 0) {
++		adrop_set_installed_id(h.id, ctx);
++	}
++}
++
++/* launchd remounts the root read-write itself: wait for it, then install */
++static void
++adrop_thread(__unused void *arg, __unused wait_result_t wr)
++{
++	for (unsigned i = 0; i < 3000; i++) {           /* up to 5 minutes */
++		if (rootvnode != NULLVP && vnode_mount(rootvnode) != NULL &&
++		    !vfs_isrdonly(vnode_mount(rootvnode))) {
++			adrop_install();
++			return;
++		}
++		delay(100000);
++	}
++	printf("A01CORE DROP: the root volume never became writable\n");
++}
++
++void
++a01core_drop_apply(void)
++{
++	int on = 1;
++	DTEntry node;
++	const uint64_t *reg;
++	unsigned int size;
++	thread_t thread;
++	PE_parse_boot_argn("a01drop", &on, sizeof(on));
++	if (!on || SecureDTLookupEntry(NULL, "/chosen/memory-map", &node) != kSuccess ||
++	    SecureDTGetProperty(node, "A01Drop", (void const **)&reg, &size) != kSuccess || size < 16 ||
++	    reg[1] < ADROP_DATA) {
++		return;
++	}
++	adrop_pkg = (const uint8_t *)ml_static_ptovirt((vm_offset_t)reg[0]);
++	adrop_len = reg[1];
++	if (adrop_pkg != NULL && kernel_thread_start(adrop_thread, NULL, &thread) == KERN_SUCCESS) {
++		thread_deallocate(thread);
++	}
++}
++#endif /* ARM64_BOARD_CONFIG_A01CORE */
+diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
+index 37b738a..7cfc869 100644
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -1080,6 +1080,9 @@ bsd_init(void)
+ #if defined(ARM64_BOARD_CONFIG_HEROLTE)
+ extern void herolte_drop_apply(void);
+ #endif
++#if defined(ARM64_BOARD_CONFIG_A01CORE)
++extern void a01core_drop_apply(void);
++#endif
+ 
+ void
+ bsdinit_task(void)
+@@ -1110,6 +1113,10 @@ bsdinit_task(void)
+ #if defined(ARM64_BOARD_CONFIG_HEROLTE)
+ 	/* Files from the USERDATA drop zone, before launchd (bsd/dev/herolte_drop.c). */
+ 	herolte_drop_apply();
++#endif
++#if defined(ARM64_BOARD_CONFIG_A01CORE)
++	/* Files from the boot payload (A01Drop), before launchd (bsd/dev/a01core_drop.c). */
++	a01core_drop_apply();
+ #endif
+ 	load_init_program(p);
+ 	lock_trace = 1;
+diff --git a/iokit/Kernel/arm/A01CoreGPU.cpp b/iokit/Kernel/arm/A01CoreGPU.cpp
+index 912130a..4b4b3c1 100644
+--- a/iokit/Kernel/arm/A01CoreGPU.cpp
++++ b/iokit/Kernel/arm/A01CoreGPU.cpp
+@@ -126,6 +126,7 @@ a01pvr_selftest(void *arg, wait_result_t wr)
+ 	if (conn != NULL) {
+ 		a01pvr_close(conn);
+ 	}
++	IOLog("A01CORE PVR: self-test done; holding 15 s\n");
+ 	IOSleep(15000);   /* time to photograph the console */
+ }
+ 
+@@ -150,7 +151,8 @@ A01CoreGPU::start(IOService *provider)
+ 	}
+ 	int e = a01pvr_driver_init();
+ 	if (e != 0) {
+-		IOLog("A01CORE PVR: DDK driver init failed (%d)\n", e);
++		IOLog("A01CORE PVR: DDK driver init failed (%d); holding the screen 20 s\n", e);
++		IOSleep(20000);
+ 		return false;
+ 	}
+ 	setProperty(kIOUserClientClassKey, "A01CoreGPUUserClient");
+-- 
+2.55.0.windows.5
+

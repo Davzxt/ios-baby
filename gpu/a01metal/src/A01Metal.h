@@ -13,7 +13,7 @@
 NS_ASSUME_NONNULL_BEGIN
 
 // The Vulkan library to load (Mesa pvr ICD built for iOS). Overridden by A01METAL_VULKAN.
-#define A01METAL_DEFAULT_VULKAN "/usr/lib/libvulkan_powervr.dylib"
+#define A01METAL_DEFAULT_VULKAN "/private/var/a01/lib/libvulkan_powervr.dylib"
 
 // nil when no Vulkan device is available.
 FOUNDATION_EXPORT id<MTLDevice> _Nullable A01MTLCreateSystemDefaultDevice(void);

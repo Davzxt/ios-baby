@@ -632,11 +632,17 @@ PVRSRVDebugPrintf(IMG_UINT32 ui32DebugLevel, const IMG_CHAR *pszFileName, IMG_UI
 {
 	char buf[256];
 	va_list ap;
-	(void)pszFileName; (void)ui32Line;
+	const char *base = pszFileName;
+	for (const char *s = pszFileName; s && *s; s++) {
+		if (*s == '/') {
+			base = s + 1;
+		}
+	}
 	va_start(ap, pszFormat);
 	vsnprintf(buf, sizeof(buf), pszFormat, ap);
 	va_end(ap);
-	printf("PVR%s: %s\n", (ui32DebugLevel & DBGPRIV_ERROR) ? " ERROR" : "", buf);
+	printf("PVR%s %s:%u: %s\n", (ui32DebugLevel & DBGPRIV_ERROR) ? " ERROR" : "",
+	    base ? base : "?", ui32Line, buf);
 }
 
 void

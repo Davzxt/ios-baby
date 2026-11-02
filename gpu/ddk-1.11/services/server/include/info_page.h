@@ -92,7 +92,9 @@ PVRSRV_ERROR PVRSRVReleaseInfoPageKM(PMR *psPMR);
  */
 static INLINE IMG_UINT32 GetInfoPageDebugFlagsKM(void)
 {
-	return (PVRSRVGetPVRSRVData())->pui32InfoPage[DEBUG_FEATURE_FLAGS];
+	/* A01: PVRSRVDriverDeInit reads this on early init failures, before InfoPageCreate */
+	PVRSRV_DATA *psData = PVRSRVGetPVRSRVData();
+	return (psData && psData->pui32InfoPage) ? psData->pui32InfoPage[DEBUG_FEATURE_FLAGS] : 0;
 }
 
 #endif /* _INFO_PAGE_KM_H_ */

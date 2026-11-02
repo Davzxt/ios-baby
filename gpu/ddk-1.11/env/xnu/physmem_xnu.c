@@ -183,21 +183,41 @@ OSChangeSparseMemCPUAddrMap(void **psPageArray, IMG_UINT64 sCpuVAddrBase, IMG_CP
 /* PMRs from other factories (LMA, firmware heaps) are not mapped into user space on XNU yet */
 PVRSRV_ERROR OSMMapPMRGeneric(PMR *psPMR, PMR_MMAP_DATA pOSMMapData) { (void)psPMR; (void)pOSMMapData; return PVRSRV_ERROR_NOT_SUPPORTED; }
 
-/* osmmap.h (kernel-side "client" mapping, env/linux/osmmap_stub.c): not used in the kernel */
+/*
+ * osmmap.h, kernel side (env/linux/osmmap_stub.c): the shared devicemem code "maps" a PMR for the
+ * kernel itself (DevmemAcquireCpuVirtAddr, e.g. InfoPageCreate) through this function. The PMR's
+ * kernel mapping is the answer, exactly as on Linux.
+ */
 PVRSRV_ERROR
 OSMMapPMR(IMG_HANDLE hBridge, IMG_HANDLE hPMR, IMG_DEVMEM_SIZE_T uiPMRSize, IMG_UINT32 uiFlags,
     IMG_HANDLE *phOSMMapPrivDataOut, void **ppvMappingAddressOut, size_t *puiMappingLengthOut)
 {
-	(void)hBridge; (void)hPMR; (void)uiPMRSize; (void)uiFlags;
-	(void)phOSMMapPrivDataOut; (void)ppvMappingAddressOut; (void)puiMappingLengthOut;
-	return PVRSRV_ERROR_NOT_SUPPORTED;
+	PMR *psPMR = hPMR;
+	void *pvKernelAddress;
+	size_t uiLength;
+	IMG_HANDLE hPriv;
+	PVRSRV_ERROR e;
+	(void)hBridge; (void)uiPMRSize; (void)uiFlags;
+	if (PMR_IsSparse(psPMR)) {
+		e = PMRAcquireSparseKernelMappingData(psPMR, 0, 0, &pvKernelAddress, &uiLength, &hPriv);
+	} else {
+		e = PMRAcquireKernelMappingData(psPMR, 0, 0, &pvKernelAddress, &uiLength, &hPriv);
+	}
+	if (e != PVRSRV_OK) {
+		return e;
+	}
+	*phOSMMapPrivDataOut = hPriv;
+	*ppvMappingAddressOut = pvKernelAddress;
+	*puiMappingLengthOut = uiLength;
+	return PVRSRV_OK;
 }
 
 void
 OSMUnmapPMR(IMG_HANDLE hBridge, IMG_HANDLE hPMR, IMG_HANDLE hOSMMapPrivData, void *pvMappingAddress,
     size_t uiMappingLength)
 {
-	(void)hBridge; (void)hPMR; (void)hOSMMapPrivData; (void)pvMappingAddress; (void)uiMappingLength;
+	(void)hBridge; (void)pvMappingAddress; (void)uiMappingLength;
+	PMRReleaseKernelMappingData((PMR *)hPMR, hOSMMapPrivData);
 }
 
 /* ---- contiguous pages (MMU page tables) ------------------------------------------------------- */
