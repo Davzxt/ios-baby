@@ -470,6 +470,10 @@ int main(int argc, char **argv)
 	(void)argc;
 	@autoreleasepool {
 		wait_for_install(argv);
+		/* The driver compiles its internal shaders in vkCreateDevice; without NDEBUG Mesa validates
+		 * the whole shader after every NIR pass, many times slower on the single A53 (sampled in
+		 * nir_opt_dead_write_vars). */
+		setenv("NIR_DEBUG", "novalidate", 0);
 		g_main_thread = mach_thread_self();
 		install_diagnostics();
 		report("=== A01Metal: testes da GPU (Metal -> Vulkan -> DDK -> GE8100) ===\n");

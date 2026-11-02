@@ -88,7 +88,7 @@ endian = 'little'
 X
 
 cd mesa
-[ -d build ] || meson setup build --cross-file ../ios-cross.txt --buildtype=release -Dprefix=/ \
+[ -d build ] || meson setup build --cross-file ../ios-cross.txt --buildtype=release -Db_ndebug=true -Dprefix=/ \
   -Dvulkan-drivers=imagination -Dimagination-srv=true -Dgallium-drivers= \
   -Dllvm=disabled -Dmesa-clc=system -Dprecomp-compiler=system -Dglx=disabled -Degl=disabled -Dgbm=disabled -Dplatforms= -Dopengl=false \
   -Dgles1=disabled -Dgles2=disabled -Dshader-cache=disabled -Dvalgrind=disabled \
