@@ -9,7 +9,13 @@ SDK=$(xcrun --sdk iphoneos --show-sdk-path)
 CC="xcrun --sdk iphoneos clang -target arm64-apple-ios16.0 -isysroot $SDK -fobjc-arc -O2 -Wall -I$HERE/src -I$VKH/include"
 $CC -dynamiclib -install_name /private/var/a01/lib/libA01Metal.dylib -framework Foundation -framework Metal \
     "$HERE/src/A01Metal.m" -o "$OUT/libA01Metal.dylib"
-$CC -framework Foundation -framework Metal "$HERE/test/a01metal-test.m" "$OUT/libA01Metal.dylib" \
+# test shaders: GLSL -> SPIR-V (glslang), embedded in the test as C arrays
+glslangValidator -V -o "$OUT/tri.vert.spv" "$HERE/test/tri.vert"
+glslangValidator -V -o "$OUT/tri.frag.spv" "$HERE/test/tri.frag"
+( cd "$OUT" && xxd -i tri.vert.spv && xxd -i tri.frag.spv ) \
+    | sed -e 's/^unsigned char/static const unsigned char/' -e 's/^unsigned int/static const unsigned int/' \
+    > "$OUT/tri_spv.h"
+$CC -I"$OUT" -framework Foundation -framework Metal "$HERE/test/a01metal-test.m" "$OUT/libA01Metal.dylib" \
     -o "$OUT/a01metal-test"
 codesign -f -s - "$OUT/libA01Metal.dylib" "$OUT/a01metal-test"
 rm -rf "$VKH"

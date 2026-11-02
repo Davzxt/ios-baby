@@ -33,6 +33,8 @@ VKFN(vkCreateCommandPool) VKFN(vkAllocateCommandBuffers) VKFN(vkFreeCommandBuffe
 VKFN(vkBeginCommandBuffer) VKFN(vkEndCommandBuffer) VKFN(vkCmdCopyBuffer) VKFN(vkCmdFillBuffer)
 VKFN(vkCmdPipelineBarrier) VKFN(vkQueueSubmit) VKFN(vkCreateFence) VKFN(vkDestroyFence)
 VKFN(vkWaitForFences)
+/* textures, render passes, pipelines */
+VKFN(vkCreateImage) VKFN(vkDestroyImage) VKFN(vkGetImageMemoryRequirements) VKFN(vkBindImageMemory) VKFN(vkCreateImageView) VKFN(vkDestroyImageView) VKFN(vkCreateRenderPass) VKFN(vkDestroyRenderPass) VKFN(vkCreateFramebuffer) VKFN(vkDestroyFramebuffer) VKFN(vkCreateShaderModule) VKFN(vkDestroyShaderModule) VKFN(vkCreatePipelineLayout) VKFN(vkDestroyPipelineLayout) VKFN(vkCreateGraphicsPipelines) VKFN(vkDestroyPipeline) VKFN(vkCmdBeginRenderPass) VKFN(vkCmdEndRenderPass) VKFN(vkCmdBindPipeline) VKFN(vkCmdDraw) VKFN(vkCmdSetViewport) VKFN(vkCmdSetScissor) VKFN(vkCmdCopyImageToBuffer)
 
 typedef struct {
 	VkInstance inst;
@@ -78,6 +80,7 @@ static BOOL A01VKLoad(A01VK *vk)
 	IFN(vkAllocateCommandBuffers); IFN(vkFreeCommandBuffers); IFN(vkBeginCommandBuffer);
 	IFN(vkEndCommandBuffer); IFN(vkCmdCopyBuffer); IFN(vkCmdFillBuffer); IFN(vkCmdPipelineBarrier);
 	IFN(vkQueueSubmit); IFN(vkCreateFence); IFN(vkDestroyFence); IFN(vkWaitForFences);
+	IFN(vkCreateImage); IFN(vkDestroyImage); IFN(vkGetImageMemoryRequirements); IFN(vkBindImageMemory); IFN(vkCreateImageView); IFN(vkDestroyImageView); IFN(vkCreateRenderPass); IFN(vkDestroyRenderPass); IFN(vkCreateFramebuffer); IFN(vkDestroyFramebuffer); IFN(vkCreateShaderModule); IFN(vkDestroyShaderModule); IFN(vkCreatePipelineLayout); IFN(vkDestroyPipelineLayout); IFN(vkCreateGraphicsPipelines); IFN(vkDestroyPipeline); IFN(vkCmdBeginRenderPass); IFN(vkCmdEndRenderPass); IFN(vkCmdBindPipeline); IFN(vkCmdDraw); IFN(vkCmdSetViewport); IFN(vkCmdSetScissor); IFN(vkCmdCopyImageToBuffer);
 #undef IFN
 	uint32_t n = 1;
 	if (pvkEnumeratePhysicalDevices(vk->inst, &n, &vk->phys) < 0 || n == 0) {
@@ -180,48 +183,248 @@ static int32_t A01VKMemType(A01VK *vk, uint32_t bits, VkMemoryPropertyFlags want
 @end
 
 /* ---- MTLLibrary / MTLFunction ----------------------------------------------------------- */
-// A metallib holds Metal AIR (LLVM bitcode). Turning a function into SPIR-V is metal2vulkan's
-// job; until it is linked in, functions exist but pipelines cannot be built from them.
+// A library is either SPIR-V (magic 0x07230203: used as is, entry points by name) or a Metal
+// metallib with AIR (LLVM bitcode). AIR -> SPIR-V is metal2vulkan's job and is not linked yet:
+// AIR functions exist, but pipelines are built only from SPIR-V ones.
+#define A01_SPIRV_MAGIC 0x07230203u
+
 @interface A01MTLFunction : NSObject <MTLFunction>
+@property (nonatomic, readonly, nullable) NSData *spirv;
 @end
 @implementation A01MTLFunction {
 	NSString *_name;
 	id<MTLDevice> _dev;
+	NSData *_spirv;
 }
 @synthesize label;
-- (instancetype)initWithName:(NSString *)n device:(id<MTLDevice>)d
+- (instancetype)initWithName:(NSString *)n device:(id<MTLDevice>)d spirv:(nullable NSData *)spirv
 {
-	if ((self = [super init])) { _name = [n copy]; _dev = d; }
+	if ((self = [super init])) { _name = [n copy]; _dev = d; _spirv = spirv; }
 	return self;
 }
 - (NSString *)name { return _name; }
 - (id<MTLDevice>)device { return _dev; }
+- (nullable NSData *)spirv { return _spirv; }
 - (MTLFunctionType)functionType { return MTLFunctionTypeKernel; }
 @end
 
 @interface A01MTLLibrary : NSObject <MTLLibrary>
 @end
 @implementation A01MTLLibrary {
-	NSData *_air;
+	NSData *_code;
 	id<MTLDevice> _dev;
+	BOOL _isSPIRV;
 }
 @synthesize label;
 - (instancetype)initWithData:(NSData *)d device:(id<MTLDevice>)dev
 {
-	if ((self = [super init])) { _air = d; _dev = dev; }
+	if ((self = [super init])) {
+		_code = d;
+		_dev = dev;
+		_isSPIRV = d.length >= 20 && ((const uint32_t *)d.bytes)[0] == A01_SPIRV_MAGIC;
+	}
 	return self;
 }
 - (id<MTLDevice>)device { return _dev; }
 - (NSArray<NSString *> *)functionNames { return @[]; /* filled by the metallib parser (todo) */ }
 - (nullable id<MTLFunction>)newFunctionWithName:(NSString *)name
 {
-	return [[A01MTLFunction alloc] initWithName:name device:_dev];
+	return [[A01MTLFunction alloc] initWithName:name device:_dev spirv:_isSPIRV ? _code : nil];
 }
+@end
+
+/* ---- formats ---------------------------------------------------------------------------------- */
+static VkFormat
+a01_vk_format(MTLPixelFormat f)
+{
+	switch (f) {
+	case MTLPixelFormatRGBA8Unorm: return VK_FORMAT_R8G8B8A8_UNORM;
+	case MTLPixelFormatBGRA8Unorm: return VK_FORMAT_B8G8R8A8_UNORM;
+	case MTLPixelFormatRGBA8Unorm_sRGB: return VK_FORMAT_R8G8B8A8_SRGB;
+	case MTLPixelFormatBGRA8Unorm_sRGB: return VK_FORMAT_B8G8R8A8_SRGB;
+	default: return VK_FORMAT_UNDEFINED;
+	}
+}
+
+/* ---- MTLTexture: a 2D VkImage in device memory, with its view ------------------------------ */
+@interface A01MTLTexture : NSObject <MTLTexture>
+@property (nonatomic, readonly) VkImage vkImage;
+@property (nonatomic, readonly) VkImageView vkView;
+@property (nonatomic, readonly) VkFormat vkFormat;
+@property (nonatomic) VkImageLayout vkLayout;   /* layout after the last recorded use */
+@end
+
+@implementation A01MTLTexture {
+	id<MTLDevice> _dev;
+	A01VK *_vk;
+	VkDeviceMemory _mem;
+	NSUInteger _w, _h;
+	MTLPixelFormat _fmt;
+}
+@synthesize label;
+
+- (nullable instancetype)initWithDevice:(id<MTLDevice>)d vk:(A01VK *)vk descriptor:(MTLTextureDescriptor *)desc
+{
+	if (!(self = [super init])) return nil;
+	_dev = d; _vk = vk; _w = desc.width; _h = desc.height; _fmt = desc.pixelFormat;
+	_vkFormat = a01_vk_format(desc.pixelFormat);
+	if (_vkFormat == VK_FORMAT_UNDEFINED || desc.textureType != MTLTextureType2D) return nil;
+	VkImageCreateInfo ici = { .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, .imageType = VK_IMAGE_TYPE_2D,
+	    .format = _vkFormat, .extent = { (uint32_t)_w, (uint32_t)_h, 1 }, .mipLevels = 1, .arrayLayers = 1,
+	    .samples = VK_SAMPLE_COUNT_1_BIT, .tiling = VK_IMAGE_TILING_OPTIMAL,
+	    .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+	             VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+	    .sharingMode = VK_SHARING_MODE_EXCLUSIVE, .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED };
+	if (pvkCreateImage(vk->dev, &ici, NULL, &_vkImage) != VK_SUCCESS) return nil;
+	VkMemoryRequirements req;
+	pvkGetImageMemoryRequirements(vk->dev, _vkImage, &req);
+	int32_t t = A01VKMemType(vk, req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+	if (t < 0) t = A01VKMemType(vk, req.memoryTypeBits, 0);
+	VkMemoryAllocateInfo mai = { .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+	                             .allocationSize = req.size, .memoryTypeIndex = (uint32_t)t };
+	if (t < 0 || pvkAllocateMemory(vk->dev, &mai, NULL, &_mem) != VK_SUCCESS) return nil;
+	pvkBindImageMemory(vk->dev, _vkImage, _mem, 0);
+	VkImageViewCreateInfo vci = { .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO, .image = _vkImage,
+	    .viewType = VK_IMAGE_VIEW_TYPE_2D, .format = _vkFormat,
+	    .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 } };
+	if (pvkCreateImageView(vk->dev, &vci, NULL, &_vkView) != VK_SUCCESS) return nil;
+	_vkLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+	return self;
+}
+
+- (void)dealloc
+{
+	if (_vkView) pvkDestroyImageView(_vk->dev, _vkView, NULL);
+	if (_vkImage) pvkDestroyImage(_vk->dev, _vkImage, NULL);
+	if (_mem) pvkFreeMemory(_vk->dev, _mem, NULL);
+}
+
+- (id<MTLDevice>)device { return _dev; }
+- (NSUInteger)width { return _w; }
+- (NSUInteger)height { return _h; }
+- (NSUInteger)depth { return 1; }
+- (NSUInteger)mipmapLevelCount { return 1; }
+- (NSUInteger)arrayLength { return 1; }
+- (NSUInteger)sampleCount { return 1; }
+- (MTLPixelFormat)pixelFormat { return _fmt; }
+- (MTLTextureType)textureType { return MTLTextureType2D; }
+- (MTLStorageMode)storageMode { return MTLStorageModePrivate; }
+@end
+
+/* ---- MTLRenderPipelineState: a VkPipeline for one color attachment format ----------------- */
+@interface A01MTLRenderPipelineState : NSObject <MTLRenderPipelineState>
+@property (nonatomic, readonly) VkPipeline vkPipeline;
+@end
+
+@implementation A01MTLRenderPipelineState {
+	id<MTLDevice> _dev;
+	A01VK *_vk;
+	VkPipelineLayout _layout;
+	VkRenderPass _pass;
+	VkShaderModule _vs, _fs;
+}
+@synthesize label;
+
+static VkShaderModule
+a01_shader(A01VK *vk, NSData *spirv)
+{
+	VkShaderModule m = VK_NULL_HANDLE;
+	VkShaderModuleCreateInfo ci = { .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+	    .codeSize = spirv.length, .pCode = spirv.bytes };
+	return pvkCreateShaderModule(vk->dev, &ci, NULL, &m) == VK_SUCCESS ? m : VK_NULL_HANDLE;
+}
+
+/* render pass compatible with every encoder that renders to this format (load/store ops do not
+ * matter for compatibility) */
+static VkRenderPass
+a01_render_pass(A01VK *vk, VkFormat fmt, VkAttachmentLoadOp load)
+{
+	VkAttachmentDescription att = { .format = fmt, .samples = VK_SAMPLE_COUNT_1_BIT, .loadOp = load,
+	    .storeOp = VK_ATTACHMENT_STORE_OP_STORE, .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+	    .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+	    .initialLayout = load == VK_ATTACHMENT_LOAD_OP_LOAD ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
+	    .finalLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL };
+	VkAttachmentReference ref = { 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
+	VkSubpassDescription sub = { .pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+	    .colorAttachmentCount = 1, .pColorAttachments = &ref };
+	VkRenderPassCreateInfo ci = { .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+	    .attachmentCount = 1, .pAttachments = &att, .subpassCount = 1, .pSubpasses = &sub };
+	VkRenderPass rp = VK_NULL_HANDLE;
+	return pvkCreateRenderPass(vk->dev, &ci, NULL, &rp) == VK_SUCCESS ? rp : VK_NULL_HANDLE;
+}
+
+- (nullable instancetype)initWithDevice:(id<MTLDevice>)d vk:(A01VK *)vk descriptor:(MTLRenderPipelineDescriptor *)desc
+                                  error:(NSError **)error
+{
+	if (!(self = [super init])) return nil;
+	_dev = d; _vk = vk;
+	A01MTLFunction *vf = (A01MTLFunction *)desc.vertexFunction, *ff = (A01MTLFunction *)desc.fragmentFunction;
+	VkFormat fmt = a01_vk_format(desc.colorAttachments[0].pixelFormat);
+	if (!vf.spirv || !ff.spirv) {
+		if (error) *error = A01Err(@"render pipeline: shaders must be SPIR-V (AIR translation not linked yet)");
+		return nil;
+	}
+	if (fmt == VK_FORMAT_UNDEFINED) {
+		if (error) *error = A01Err(@"render pipeline: color attachment format not supported");
+		return nil;
+	}
+	_vs = a01_shader(vk, vf.spirv);
+	_fs = a01_shader(vk, ff.spirv);
+	_pass = a01_render_pass(vk, fmt, VK_ATTACHMENT_LOAD_OP_CLEAR);
+	VkPipelineLayoutCreateInfo lci = { .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
+	if (!_vs || !_fs || !_pass || pvkCreatePipelineLayout(vk->dev, &lci, NULL, &_layout) != VK_SUCCESS) {
+		if (error) *error = A01Err(@"render pipeline: shader module, render pass or layout creation failed");
+		return nil;
+	}
+	const char *vname = vf.name.UTF8String, *fname = ff.name.UTF8String;
+	VkPipelineShaderStageCreateInfo st[2] = {
+		{ .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .stage = VK_SHADER_STAGE_VERTEX_BIT, .module = _vs, .pName = vname },
+		{ .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .stage = VK_SHADER_STAGE_FRAGMENT_BIT, .module = _fs, .pName = fname },
+	};
+	VkPipelineVertexInputStateCreateInfo vi = { .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
+	VkPipelineInputAssemblyStateCreateInfo ia = { .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+	    .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST };
+	VkPipelineViewportStateCreateInfo vp = { .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+	    .viewportCount = 1, .scissorCount = 1 };
+	VkPipelineRasterizationStateCreateInfo rs = { .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+	    .polygonMode = VK_POLYGON_MODE_FILL, .cullMode = VK_CULL_MODE_NONE, .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
+	    .lineWidth = 1.0f };
+	VkPipelineMultisampleStateCreateInfo ms = { .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+	    .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT };
+	VkPipelineColorBlendAttachmentState cba = { .colorWriteMask = 0xf };
+	VkPipelineColorBlendStateCreateInfo cb = { .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+	    .attachmentCount = 1, .pAttachments = &cba };
+	VkDynamicState dyn[2] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+	VkPipelineDynamicStateCreateInfo ds = { .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+	    .dynamicStateCount = 2, .pDynamicStates = dyn };
+	VkGraphicsPipelineCreateInfo gci = { .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+	    .stageCount = 2, .pStages = st, .pVertexInputState = &vi, .pInputAssemblyState = &ia,
+	    .pViewportState = &vp, .pRasterizationState = &rs, .pMultisampleState = &ms, .pColorBlendState = &cb,
+	    .pDynamicState = &ds, .layout = _layout, .renderPass = _pass, .subpass = 0 };
+	VkResult r = pvkCreateGraphicsPipelines(vk->dev, VK_NULL_HANDLE, 1, &gci, NULL, &_vkPipeline);
+	if (r != VK_SUCCESS) {
+		if (error) *error = A01Err([NSString stringWithFormat:@"render pipeline: vkCreateGraphicsPipelines %d", r]);
+		return nil;
+	}
+	return self;
+}
+
+- (void)dealloc
+{
+	if (_vkPipeline) pvkDestroyPipeline(_vk->dev, _vkPipeline, NULL);
+	if (_layout) pvkDestroyPipelineLayout(_vk->dev, _layout, NULL);
+	if (_pass) pvkDestroyRenderPass(_vk->dev, _pass, NULL);
+	if (_vs) pvkDestroyShaderModule(_vk->dev, _vs, NULL);
+	if (_fs) pvkDestroyShaderModule(_vk->dev, _fs, NULL);
+}
+
+- (id<MTLDevice>)device { return _dev; }
 @end
 
 /* ---- command buffers and encoders -------------------------------------------------------- */
 @interface A01MTLCommandBuffer : NSObject <MTLCommandBuffer>
 - (instancetype)initWithQueue:(id<MTLCommandQueue>)q vk:(A01VK *)vk pool:(VkCommandPool)pool;
+- (void)a01_retainUntilCompleted:(id)obj;
 @property (nonatomic, readonly) VkCommandBuffer vkCmd;
 @end
 
@@ -257,6 +460,31 @@ static int32_t A01VKMemType(A01VK *vk, uint32_t bits, VkMemoryPropertyFlags want
 		if (e > a) memset(p + e, v, range.location + range.length - e);
 	}
 }
+/* texture -> buffer (readback): the image goes to TRANSFER_SRC first if it is not there yet */
+- (void)copyFromTexture:(id<MTLTexture>)srcT sourceSlice:(NSUInteger)slice sourceLevel:(NSUInteger)level
+           sourceOrigin:(MTLOrigin)origin sourceSize:(MTLSize)size toBuffer:(id<MTLBuffer>)dst
+      destinationOffset:(NSUInteger)doff destinationBytesPerRow:(NSUInteger)bpr
+    destinationBytesPerImage:(NSUInteger)bpi
+{
+	(void)bpi;
+	A01MTLTexture *t = (A01MTLTexture *)srcT;
+	if (t.vkLayout != VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) {
+		VkImageMemoryBarrier ib = { .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+		    .srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT, .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+		    .oldLayout = t.vkLayout, .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+		    .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED, .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		    .image = t.vkImage, .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 } };
+		pvkCmdPipelineBarrier(_cb.vkCmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+		                      0, 0, NULL, 0, NULL, 1, &ib);
+		t.vkLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+	}
+	VkBufferImageCopy r = { .bufferOffset = doff, .bufferRowLength = (uint32_t)(bpr / 4), .bufferImageHeight = 0,
+	    .imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, (uint32_t)level, (uint32_t)slice, 1 },
+	    .imageOffset = { (int32_t)origin.x, (int32_t)origin.y, 0 },
+	    .imageExtent = { (uint32_t)size.width, (uint32_t)size.height, 1 } };
+	pvkCmdCopyImageToBuffer(_cb.vkCmd, t.vkImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+	                        ((A01MTLBuffer *)dst).vkBuffer, 1, &r);
+}
 - (void)endEncoding
 {
 	VkMemoryBarrier mb = { .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
@@ -271,6 +499,97 @@ static int32_t A01VKMemType(A01VK *vk, uint32_t bits, VkMemoryPropertyFlags want
 - (void)popDebugGroup {}
 @end
 
+/* ---- render command encoder: one Vulkan render pass on color attachment 0 ------------------ */
+@interface A01MTLRenderCommandEncoder : NSObject <MTLRenderCommandEncoder>
+- (nullable instancetype)initWithCommandBuffer:(A01MTLCommandBuffer *)cb vk:(A01VK *)vk
+                                    descriptor:(MTLRenderPassDescriptor *)d error:(NSError **)error;
+@end
+
+@implementation A01MTLRenderCommandEncoder {
+	A01MTLCommandBuffer *_cb;
+	A01VK *_vk;
+	A01MTLTexture *_target;
+	VkRenderPass _pass;
+	VkFramebuffer _fb;
+}
+@synthesize label;
+
+- (nullable instancetype)initWithCommandBuffer:(A01MTLCommandBuffer *)cb vk:(A01VK *)vk
+                                    descriptor:(MTLRenderPassDescriptor *)d error:(NSError **)error
+{
+	if (!(self = [super init])) return nil;
+	_cb = cb; _vk = vk;
+	MTLRenderPassColorAttachmentDescriptor *ca = d.colorAttachments[0];
+	_target = (A01MTLTexture *)ca.texture;
+	if (_target == nil || ![_target isKindOfClass:[A01MTLTexture class]]) {
+		if (error) *error = A01Err(@"render pass: color attachment 0 must be an A01Metal texture");
+		return nil;
+	}
+	VkAttachmentLoadOp load = ca.loadAction == MTLLoadActionClear ? VK_ATTACHMENT_LOAD_OP_CLEAR :
+	    ca.loadAction == MTLLoadActionLoad && _target.vkLayout != VK_IMAGE_LAYOUT_UNDEFINED ?
+	    VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+	if (load == VK_ATTACHMENT_LOAD_OP_LOAD && _target.vkLayout != VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL) {
+		VkImageMemoryBarrier ib = { .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+		    .srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT, .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+		    .oldLayout = _target.vkLayout, .newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+		    .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED, .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		    .image = _target.vkImage, .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 } };
+		pvkCmdPipelineBarrier(cb.vkCmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+		                      VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, NULL, 0, NULL, 1, &ib);
+	}
+	_pass = a01_render_pass(vk, _target.vkFormat, load);
+	VkImageView view = _target.vkView;
+	VkFramebufferCreateInfo fci = { .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO, .renderPass = _pass,
+	    .attachmentCount = 1, .pAttachments = &view, .width = (uint32_t)_target.width,
+	    .height = (uint32_t)_target.height, .layers = 1 };
+	if (!_pass || pvkCreateFramebuffer(vk->dev, &fci, NULL, &_fb) != VK_SUCCESS) {
+		if (error) *error = A01Err(@"render pass: vkCreateRenderPass/vkCreateFramebuffer failed");
+		return nil;
+	}
+	[cb a01_retainUntilCompleted:self];
+	MTLClearColor cc = ca.clearColor;
+	VkClearValue clear = { .color = { .float32 = { (float)cc.red, (float)cc.green, (float)cc.blue, (float)cc.alpha } } };
+	VkRenderPassBeginInfo bi = { .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO, .renderPass = _pass,
+	    .framebuffer = _fb, .renderArea = { { 0, 0 }, { (uint32_t)_target.width, (uint32_t)_target.height } },
+	    .clearValueCount = 1, .pClearValues = &clear };
+	pvkCmdBeginRenderPass(cb.vkCmd, &bi, VK_SUBPASS_CONTENTS_INLINE);
+	VkViewport vp = { 0, 0, (float)_target.width, (float)_target.height, 0.0f, 1.0f };
+	VkRect2D sc = { { 0, 0 }, { (uint32_t)_target.width, (uint32_t)_target.height } };
+	pvkCmdSetViewport(cb.vkCmd, 0, 1, &vp);
+	pvkCmdSetScissor(cb.vkCmd, 0, 1, &sc);
+	return self;
+}
+
+- (void)dealloc
+{
+	if (_fb) pvkDestroyFramebuffer(_vk->dev, _fb, NULL);
+	if (_pass) pvkDestroyRenderPass(_vk->dev, _pass, NULL);
+}
+
+- (id<MTLDevice>)device { return _cb.device; }
+
+- (void)setRenderPipelineState:(id<MTLRenderPipelineState>)ps
+{
+	[_cb a01_retainUntilCompleted:ps];
+	pvkCmdBindPipeline(_cb.vkCmd, VK_PIPELINE_BIND_POINT_GRAPHICS, ((A01MTLRenderPipelineState *)ps).vkPipeline);
+}
+
+- (void)drawPrimitives:(MTLPrimitiveType)type vertexStart:(NSUInteger)start vertexCount:(NSUInteger)count
+{
+	(void)type;   /* the pipeline's topology (triangle list) applies */
+	pvkCmdDraw(_cb.vkCmd, (uint32_t)count, 1, (uint32_t)start, 0);
+}
+
+- (void)endEncoding
+{
+	pvkCmdEndRenderPass(_cb.vkCmd);
+	_target.vkLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;   /* the render pass's final layout */
+}
+- (void)insertDebugSignpost:(NSString *)s { (void)s; }
+- (void)pushDebugGroup:(NSString *)s { (void)s; }
+- (void)popDebugGroup {}
+@end
+
 @implementation A01MTLCommandBuffer {
 	id<MTLCommandQueue> _queue;
 	A01VK *_vk;
@@ -278,6 +597,7 @@ static int32_t A01VKMemType(A01VK *vk, uint32_t bits, VkMemoryPropertyFlags want
 	VkFence _fence;
 	MTLCommandBufferStatus _status;
 	NSMutableArray<MTLCommandBufferHandler> *_completed;
+	NSMutableArray *_keep;
 	NSError *_error;
 }
 @synthesize label;
@@ -285,7 +605,7 @@ static int32_t A01VKMemType(A01VK *vk, uint32_t bits, VkMemoryPropertyFlags want
 - (instancetype)initWithQueue:(id<MTLCommandQueue>)q vk:(A01VK *)vk pool:(VkCommandPool)pool
 {
 	if (!(self = [super init])) return nil;
-	_queue = q; _vk = vk; _pool = pool; _completed = [NSMutableArray new];
+	_queue = q; _vk = vk; _pool = pool; _completed = [NSMutableArray new]; _keep = [NSMutableArray new];
 	VkCommandBufferAllocateInfo ai = { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
 	    .commandPool = pool, .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY, .commandBufferCount = 1 };
 	VkCommandBufferBeginInfo bi = { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -320,9 +640,19 @@ static int32_t A01VKMemType(A01VK *vk, uint32_t bits, VkMemoryPropertyFlags want
 
 - (nullable id<MTLRenderCommandEncoder>)renderCommandEncoderWithDescriptor:(MTLRenderPassDescriptor *)d
 {
-	(void)d;
-	_error = A01Err(@"render encoders need textures and render passes, not implemented yet");
-	return nil;
+	NSError *e = nil;
+	A01MTLRenderCommandEncoder *enc = [[A01MTLRenderCommandEncoder alloc] initWithCommandBuffer:self vk:_vk
+	                                                                                  descriptor:d error:&e];
+	if (enc == nil) {
+		_error = e;
+	}
+	return enc;
+}
+
+/* render passes, framebuffers and pipelines must outlive the GPU work that uses them */
+- (void)a01_retainUntilCompleted:(id)obj
+{
+	if (obj) [_keep addObject:obj];
 }
 
 - (void)addCompletedHandler:(MTLCommandBufferHandler)block { [_completed addObject:[block copy]]; }
@@ -353,6 +683,7 @@ static int32_t A01VKMemType(A01VK *vk, uint32_t bits, VkMemoryPropertyFlags want
 	if (r != VK_SUCCESS) _error = A01Err([NSString stringWithFormat:@"fence wait failed (%d)", r]);
 	for (MTLCommandBufferHandler h in _completed) h(self);
 	[_completed removeAllObjects];
+	[_keep removeAllObjects];   /* the GPU is done with them; also breaks encoder <-> buffer cycles */
 }
 @end
 
@@ -455,9 +786,12 @@ static int32_t A01VKMemType(A01VK *vk, uint32_t bits, VkMemoryPropertyFlags want
 - (nullable id<MTLRenderPipelineState>)newRenderPipelineStateWithDescriptor:(MTLRenderPipelineDescriptor *)d
                                                                       error:(NSError **)error
 {
-	(void)d;
-	if (error) *error = A01Err(@"render pipelines not implemented yet");
-	return nil;
+	return [[A01MTLRenderPipelineState alloc] initWithDevice:self vk:&_vk descriptor:d error:error];
+}
+
+- (nullable id<MTLTexture>)newTextureWithDescriptor:(MTLTextureDescriptor *)d
+{
+	return [[A01MTLTexture alloc] initWithDevice:self vk:&_vk descriptor:d];
 }
 @end
 

@@ -17,6 +17,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - name: Deps
+        run: brew install glslang
       - name: Build
         run: bash gpu/a01metal/build-a01metal.sh out
       - uses: actions/upload-artifact@v4
