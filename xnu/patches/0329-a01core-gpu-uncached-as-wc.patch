@@ -1,0 +1,43 @@
+From ab7f8406d73af4d8bef9ff05697e14d2930adec3 Mon Sep 17 00:00:00 2001
+From: a01core <a01core@localhost>
+Date: Mon, 2 Nov 2026 16:01:57 -0300
+Subject: [PATCH] 0329 a01core: GE8100 uncached memory as Normal non-cacheable
+ (write-combine), not Device memory
+
+---
+ iokit/Kernel/arm/A01CoreGPU.cpp | 12 +++++++-----
+ 1 file changed, 7 insertions(+), 5 deletions(-)
+
+diff --git a/iokit/Kernel/arm/A01CoreGPU.cpp b/iokit/Kernel/arm/A01CoreGPU.cpp
+index 4e3435b..ea7a1a1 100644
+--- a/iokit/Kernel/arm/A01CoreGPU.cpp
++++ b/iokit/Kernel/arm/A01CoreGPU.cpp
+@@ -55,9 +55,11 @@ a01gpu_buf_alloc(uint64_t size, int contiguous, int cache_mode)
+ 	}
+ 	/* the kernel mapping follows the DDK's CPU cache mode: memory the firmware writes (init
+ 	 * structures, CCBs, sync blocks) is uncached, or the CPU keeps reading stale lines */
+-	if (cache_mode == 1) {
+-		opts |= kIOMapInhibitCache;
+-	} else if (cache_mode == 2) {
++	/* "Uncached" is Normal non-cacheable (write-combine), as the Linux DDK maps it on arm64, not
++	 * kIOMapInhibitCache's Device memory: Device memory faults on unaligned accesses, and
++	 * compiler-made struct copies (ldp q0, q1) of firmware data are not 16-byte aligned (panic in
++	 * RGXGetTimeCorrData). */
++	if (cache_mode == 1 || cache_mode == 2) {
+ 		opts |= kIOMapWriteCombineCache;
+ 	}
+ 	/* GE8100: RGX_FEATURE_PHYS_BUS_WIDTH 32 */
+@@ -98,8 +100,8 @@ a01gpu_buf_phys(struct a01gpu_buf *b, uint64_t offset)
+ extern "C" int
+ a01gpu_buf_map_user(struct a01gpu_buf *b, int cache_mode, uint64_t *uaddr)
+ {
+-	IOOptionBits cache = cache_mode == 1 ? kIOMapInhibitCache :
+-	    cache_mode == 2 ? kIOMapWriteCombineCache : kIOMapDefaultCache;
++	/* same as the kernel mapping: no Device memory, userland memcpy is unaligned too */
++	IOOptionBits cache = (cache_mode == 1 || cache_mode == 2) ? kIOMapWriteCombineCache : kIOMapDefaultCache;
+ 	for (unsigned i = 0; i < A01GPU_MAX_MAPS; i++) {
+ 		if (b->umaps[i] == NULL) {
+ 			b->umaps[i] = b->md->createMappingInTask(current_task(), 0, kIOMapAnywhere | cache);
+-- 
+2.55.0.windows.5
+
