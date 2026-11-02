@@ -4508,6 +4508,54 @@ void RGXDumpFirmwareTrace(DUMPDEBUG_PRINTF_FUNC *pfnDumpDebugPrintf,
 	}
 }
 
+/* A01 Core: the debug dump shows the firmware trace decoded, last A01_FWTRACE_TAIL entries only, so
+ * one photo of the phone's screen shows what the firmware did last (the raw hex dump scrolled away
+ * and needed decoding by hand). RGXDumpFirmwareTrace is run twice: once to count its lines, once
+ * printing only the tail. */
+#define A01_FWTRACE_TAIL 40U
+static IMG_UINT32 a01_ft_lines, a01_ft_skip;
+static DUMPDEBUG_PRINTF_FUNC *a01_ft_real;
+
+static void
+a01_ft_count(void *pvDumpDebugFile, const IMG_CHAR *pszFormat, ...)
+{
+	(void)pvDumpDebugFile;
+	(void)pszFormat;
+	a01_ft_lines++;
+}
+
+static void
+a01_ft_tail(void *pvDumpDebugFile, const IMG_CHAR *pszFormat, ...)
+{
+	IMG_CHAR szLine[PVR_MAX_DEBUG_MESSAGE_LEN];
+	va_list ap;
+
+	if (a01_ft_skip > 0)
+	{
+		a01_ft_skip--;
+		return;
+	}
+	va_start(ap, pszFormat);
+	OSVSNPrintf(szLine, sizeof(szLine), pszFormat, ap);
+	va_end(ap);
+	a01_ft_real(pvDumpDebugFile, "%s", szLine);
+}
+
+static void
+a01_dump_fw_trace_tail(DUMPDEBUG_PRINTF_FUNC *pfnDumpDebugPrintf, void *pvDumpDebugFile,
+                       PVRSRV_RGXDEV_INFO *psDevInfo)
+{
+	a01_ft_lines = 0;
+	RGXDumpFirmwareTrace(a01_ft_count, NULL, psDevInfo);
+	a01_ft_skip = (a01_ft_lines > A01_FWTRACE_TAIL) ? a01_ft_lines - A01_FWTRACE_TAIL : 0;
+	a01_ft_real = pfnDumpDebugPrintf;
+	pfnDumpDebugPrintf(pvDumpDebugFile, "------[ A01: FW trace, last %u of %u lines ]------",
+	                   (a01_ft_lines > A01_FWTRACE_TAIL) ? A01_FWTRACE_TAIL : a01_ft_lines, a01_ft_lines);
+	RGXDumpFirmwareTrace(a01_ft_tail, pvDumpDebugFile, psDevInfo);
+	pfnDumpDebugPrintf(pvDumpDebugFile, "------[ A01: FW trace END ]------");
+}
+
+
 static const IMG_CHAR *_RGXGetDebugDevStateString(PVRSRV_DEVICE_STATE eDevState)
 {
 	switch (eDevState)
@@ -5196,7 +5244,12 @@ void RGXDebugRequestProcess(DUMPDEBUG_PRINTF_FUNC *pfnDumpDebugPrintf,
 		PVR_DUMPDEBUG_LOG("FW OS config flags = 0x%X (%s)", psOSConfig->ui32ConfigFlags, sFwFlagsDescription);
 	}
 
-	if (DD_VERB_LVL_ENABLED(ui32VerbLevel, DEBUG_REQUEST_VERBOSITY_MEDIUM))
+	if (DD_VERB_LVL_ENABLED(ui32VerbLevel, DEBUG_REQUEST_VERBOSITY_MEDIUM) && psRGXFWIfTraceBufCtl != NULL)
+	{
+		a01_dump_fw_trace_tail(pfnDumpDebugPrintf, pvDumpDebugFile, psDevInfo);
+	}
+	/* A01: the raw hex trace is replaced by the decoded tail above */
+	if (0 && DD_VERB_LVL_ENABLED(ui32VerbLevel, DEBUG_REQUEST_VERBOSITY_MEDIUM))
 	{
 		IMG_INT tid;
 		/* Dump FW trace information */
