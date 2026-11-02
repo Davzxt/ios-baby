@@ -19,6 +19,7 @@
 #include "allocmem.h"
 #include "pvr_bridge.h"
 #include "a01pvr.h"
+#include "process_stats.h"
 
 typedef struct {
 	PVRSRV_DEVICE_NODE *psDevNode;
@@ -63,6 +64,13 @@ int
 a01pvr_driver_init(void)
 {
 	PVRSRV_ERROR e = OSLockCreate(&ghA01MMapLock);
+#if defined(PVRSRV_ENABLE_PROCESS_STATS)
+	/* PVRSRVCommonDriverInit (env/linux/module_common.c) does this before PVRSRVDriverInit:
+	 * every connection registers its process in these statistics. */
+	if (e == PVRSRV_OK) {
+		e = PVRSRVStatsInitialise();
+	}
+#endif
 	if (e == PVRSRV_OK) {
 		e = PVRSRVDriverInit();
 	}
