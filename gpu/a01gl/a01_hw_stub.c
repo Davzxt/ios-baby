@@ -9,12 +9,18 @@
 #include <stdint.h>
 
 struct pipe_resource;
+struct pipe_screen;
 
-/* the declarations osmesa_hero.inc uses (Mesa builds with -Werror=missing-prototypes) */
+/* the declarations osmesa_hero.inc and osmesa_target.c use (Mesa builds with
+ * -Werror=missing-prototypes; Darwin's linker wants the weak one defined too) */
+struct pipe_screen *hero_hw_create_screen(void);
 int hero_hw_active(void);
 struct pipe_resource *hero_hw_surface_resource(uint32_t surface_id, int opaque, unsigned *w, unsigned *h);
 void hero_hw_surface_sync(uint32_t surface_id);
 void hero_hw_surface_forget(uint32_t surface_id);
+
+/* no hardware screen: osmesa_create_screen() takes the GALLIUM_DRIVER one (softpipe or zink) */
+struct pipe_screen *hero_hw_create_screen(void) { return NULL; }
 
 int hero_hw_active(void) { return 0; }
 
