@@ -10,6 +10,12 @@
 
 struct pipe_resource;
 
+/* the declarations osmesa_hero.inc uses (Mesa builds with -Werror=missing-prototypes) */
+int hero_hw_active(void);
+struct pipe_resource *hero_hw_surface_resource(uint32_t surface_id, int opaque, unsigned *w, unsigned *h);
+void hero_hw_surface_sync(uint32_t surface_id);
+void hero_hw_surface_forget(uint32_t surface_id);
+
 int hero_hw_active(void) { return 0; }
 
 struct pipe_resource *
