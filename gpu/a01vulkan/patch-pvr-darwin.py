@@ -292,3 +292,42 @@ if "A01: heap page units" not in t:
         t = t.replace(old, new, 1)
     f.write_text(t)
     print("pvr_srv_bo.c: GPU map/unmap in heap page units")
+
+# A01 diagnostics: the first TQ copy's source image state, as one console line the user can type
+# (the GE8100 faults with a TCU read of 0x8DFBB2A940 on vkCmdCopyBuffer while fill, clear and
+# a shaded triangle work). Printed to stderr, which the GPU test shows on the console.
+f = mesa / "src/imagination/vulkan/pvr_arch_job_transfer.c"
+t = f.read_text()
+if "A01 >>> VK: src" not in t:
+    old = """      result = pvr_sampler_image_state(ctx,
+                                       transfer_cmd,
+                                       sh_reg_layout,
+                                       state,
+                                       dma_space);
+      if (result != VK_SUCCESS)
+         return result;
+"""
+    if t.count(old) != 1:
+        raise SystemExit("pvr_arch_job_transfer.c: sampler/image state call not found")
+    new = old + """#if defined(__APPLE__)
+      {
+         static int a01_once;
+         if (!a01_once++) {
+            const struct pvr_transfer_cmd_surface *a01_s = &transfer_cmd->sources[0].surface;
+            const uint32_t a01_io = sh_reg_layout->combined_image_samplers.offsets[0].image;
+            const uint32_t a01_so = sh_reg_layout->combined_image_samplers.offsets[0].sampler;
+            uint64_t a01_w[2];
+            memcpy(a01_w, dma_space + a01_io, sizeof(a01_w));
+            fprintf(stderr, "A01 >>> VK: src %llx L%u %ux%u cp%u n%u i%u s%u W1 %016llx <<<\\n",
+                    (unsigned long long)a01_s->dev_addr.addr, (unsigned)a01_s->mem_layout,
+                    a01_s->width, a01_s->height, state->common_ptr, tex_state_dma_size_dw,
+                    a01_io, a01_so, (unsigned long long)a01_w[1]);
+         }
+      }
+#endif
+"""
+    t = t.replace(old, new, 1)
+    if "#include <stdio.h>" not in t:
+        t = "#include <stdio.h>\n" + t
+    f.write_text(t)
+    print("pvr_arch_job_transfer.c: first TQ source state printed")
