@@ -249,3 +249,30 @@ for path, inc in [(C, '#include "pvr_srv_sync_prim.h"'), (T, '#include "pvr_srv_
         t = t.replace('#include "pvr_srv_bridge.h"\n', '#include "pvr_srv_bridge.h"\n' + inc + "\n", 1)
         path.write_text(t)
 print("A01 GPU completion fences (sync prims) applied")
+
+# GPU caches: img-pvr maps CPU-written memory GPU_CACHE_INCOHERENT and never asks the firmware to
+# invalidate the GPU caches. On the GE8100 (8 KiB SLC, set up differently from the GE8320) the GPU
+# then reads stale lines: the TQ copy only worked with DOUTD bypassing the caches, and the iOS UI
+# read garbage/zero image states (TCU faults at c0c0c0f140 / 240, noise textures, wrong colours).
+# On Darwin every allocation is GPU-uncached (A01_PVR_GPU_CACHED=1 restores the original).
+B = W / "pvr_srv_bo.c"
+edit(B,
+     "   if (ws_flags & PVR_WINSYS_BO_FLAG_GPU_UNCACHED)\n"
+     "      srv_flags |= PVR_SRV_MEMALLOCFLAG_GPU_UNCACHED;\n"
+     "   else\n"
+     "      srv_flags |= PVR_SRV_MEMALLOCFLAG_GPU_CACHE_INCOHERENT;\n",
+     "#if defined(__APPLE__)\n"
+     "   {\n"
+     "      const char *a01_c = getenv(\"A01_PVR_GPU_CACHED\");\n"
+     "      if (!(a01_c && a01_c[0] == '1'))\n"
+     "         ws_flags |= PVR_WINSYS_BO_FLAG_GPU_UNCACHED;\n"
+     "   }\n"
+     "#endif\n"
+     "   if (ws_flags & PVR_WINSYS_BO_FLAG_GPU_UNCACHED)\n"
+     "      srv_flags |= PVR_SRV_MEMALLOCFLAG_GPU_UNCACHED;\n"
+     "   else\n"
+     "      srv_flags |= PVR_SRV_MEMALLOCFLAG_GPU_CACHE_INCOHERENT;\n")
+t = B.read_text()
+if "#include <stdlib.h>" not in t:
+    B.write_text("#include <stdlib.h>\n" + t)
+print("pvr_srv_bo.c: all allocations GPU-uncached on Darwin")
