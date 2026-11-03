@@ -31,7 +31,7 @@
  * watcher thread. So a run that is killed (SIGKILL, jetsam) or stuck inside a kernel call still
  * leaves its last state: step, seconds, memory footprint, last GE8100 bridge calls (the one in
  * progress included). Mesa's stderr goes through a pipe into the same text. */
-#define A01_HANG_SECONDS 120
+#define A01_HANG_SECONDS 600   /* 10 min: the Zink UI compiles shaders on the same single CPU */
 
 static char g_log[1400];
 static size_t g_len;
