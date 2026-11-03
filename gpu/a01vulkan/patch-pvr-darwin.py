@@ -260,3 +260,35 @@ a01_insert8(uint8_t *dst, const void *src, uint32_t size, uint32_t at)
     t = t.replace(old, new, 1)
     f.write_text(t)
     print("pvr_arch_srv_job_render.c: TA/3D commands padded to the GE8100 firmware layout")
+
+# Page units: iOS's CPU page is 16 KiB (ws->page_size), the GPU heaps' pages are 4 KiB. The DDK's
+# DevmemIntMapPages/UnmapPages count pages and offsets in the HEAP's page size, but img-pvr shifted
+# by the winsys (CPU) page size, which is the same on Linux. On the phone a 16 KiB buffer got only
+# its first 4 KiB mapped (and a 4 KiB buffer none): the GPU faulted writing 8 KiB into one
+# (PBE write to 0x65C00C6000).
+f = mesa / "src/imagination/vulkan/winsys/pvrsrvkm/pvr_srv_bo.c"
+t = f.read_text()
+if "A01: heap page units" not in t:
+    pairs = [
+        ("""      const uint32_t phys_page_offset = (offset - virt_offset) >>
+                                        srv_ws->base.log2_page_size;
+      const uint32_t phys_page_count = aligned_virt_size >>
+                                       srv_ws->base.log2_page_size;
+""",
+         """      /* A01: heap page units (DevmemIntMapPages), not the CPU page size */
+      const uint32_t phys_page_offset = (offset - virt_offset) >>
+                                        vma->heap->log2_page_size;
+      const uint32_t phys_page_count = aligned_virt_size >>
+                                       vma->heap->log2_page_size;
+"""),
+        ("""                              vma->mapped_size >> srv_ws->base.log2_page_size);
+""",
+         """                              vma->mapped_size >> vma->heap->log2_page_size);
+"""),
+    ]
+    for old, new in pairs:
+        if t.count(old) != 1:
+            raise SystemExit("pvr_srv_bo.c: page-unit site not found: " + old.strip()[:60])
+        t = t.replace(old, new, 1)
+    f.write_text(t)
+    print("pvr_srv_bo.c: GPU map/unmap in heap page units")
