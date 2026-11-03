@@ -12,10 +12,15 @@ $CC -dynamiclib -install_name /private/var/a01/lib/libA01Metal.dylib -framework 
 # test shaders: GLSL -> SPIR-V (glslang), embedded in the test as C arrays
 glslangValidator -V -o "$OUT/tri.vert.spv" "$HERE/test/tri.vert"
 glslangValidator -V -o "$OUT/tri.frag.spv" "$HERE/test/tri.frag"
+glslangValidator -V -o "$OUT/tex.vert.spv" "$HERE/test/tex.vert"
+glslangValidator -V -o "$OUT/tex.frag.spv" "$HERE/test/tex.frag"
+( cd "$OUT" && xxd -i tex.vert.spv && xxd -i tex.frag.spv ) \
+    | sed -e 's/^unsigned char/static const unsigned char __attribute__((aligned(4)))/' -e 's/^unsigned int/static const unsigned int/' \
+    > "$OUT/tex_spv.h"
 ( cd "$OUT" && xxd -i tri.vert.spv && xxd -i tri.frag.spv ) \
     | sed -e 's/^unsigned char/static const unsigned char/' -e 's/^unsigned int/static const unsigned int/' \
     > "$OUT/tri_spv.h"
-$CC -I"$OUT" -framework Foundation -framework Metal "$HERE/test/a01metal-test.m" "$OUT/libA01Metal.dylib" \
+$CC -I"$OUT" -framework Foundation -framework Metal "$HERE/test/a01metal-test.m" "$HERE/test/a01vktex.c" "$OUT/libA01Metal.dylib" \
     -o "$OUT/a01metal-test"
 codesign -f -s - "$OUT/libA01Metal.dylib" "$OUT/a01metal-test"
 rm -rf "$VKH"
