@@ -37,7 +37,7 @@ static char g_log[1400];
 /* GL summary for the kernel status block (first line of autorun.out, between quotes): one mark
  * per test GL1-GL7, + right, - wrong, ? running, . not run */
 static char g_gl_sum[11] = "..........";   /* GL1-GL7, then V1 V2 V3 (a01vktex.c) */
-void a01_vk_tex_test(char *out, size_t n, char marks[3]);
+void a01_vk_tex_test(char *out, size_t n, char marks[6]);
 static size_t g_len;
 static pthread_mutex_t g_mx = PTHREAD_MUTEX_INITIALIZER;
 static int g_out = STDOUT_FILENO;
@@ -1058,8 +1058,8 @@ int main(int argc, char **argv)
 			/* texture sampling straight on Vulkan, without Zink: V1 GPU copy upload, V2 CPU-written linear */
 			STEP("GL V textura direto no Vulkan");
 			g_gl_sum[7] = g_gl_sum[8] = g_gl_sum[9] = '?';
-			static char vt[600];
-			char marks[3];
+			static char vt[1400];
+			char marks[6];
 			a01_vk_tex_test(vt, sizeof(vt), marks);
 			g_gl_sum[7] = marks[0];
 			g_gl_sum[8] = marks[1];
