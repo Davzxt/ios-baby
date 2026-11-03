@@ -14,7 +14,8 @@ glslangValidator -V -o "$OUT/tri.vert.spv" "$HERE/test/tri.vert"
 glslangValidator -V -o "$OUT/tri.frag.spv" "$HERE/test/tri.frag"
 glslangValidator -V -o "$OUT/tex.vert.spv" "$HERE/test/tex.vert"
 glslangValidator -V -o "$OUT/tex.frag.spv" "$HERE/test/tex.frag"
-( cd "$OUT" && xxd -i tex.vert.spv && xxd -i tex.frag.spv ) \
+glslangValidator -V -o "$OUT/uv.frag.spv" "$HERE/test/uv.frag"
+( cd "$OUT" && xxd -i tex.vert.spv && xxd -i tex.frag.spv && xxd -i uv.frag.spv ) \
     | sed -e 's/^unsigned char/static const unsigned char __attribute__((aligned(4)))/' -e 's/^unsigned int/static const unsigned int/' \
     > "$OUT/tex_spv.h"
 ( cd "$OUT" && xxd -i tri.vert.spv && xxd -i tri.frag.spv ) \

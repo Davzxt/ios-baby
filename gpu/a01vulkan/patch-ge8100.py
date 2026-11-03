@@ -22,6 +22,11 @@ ge = ge.replace("0x22054030", "0x22021016")
 ge = re.sub(r"\.v = 67,", ".v = 49,", ge)
 ge = re.sub(r"\.n = 54,", ".n = 21,", ge)
 ge = re.sub(r"\.c = 30,", ".c = 16,", ge)
+# ISP tiles in flight follow the core's ISP IPP pipes (GE8300 4, GE8320 7; rgxconfig NUM_ISP_IPP_PIPES):
+# the GE8100 has 2. With the GE8300's 4, ISP_CTL.PIPE_ENABLE switched on two pipes the core lacks.
+if ge.count(".isp_max_tiles_in_flight = 4U,") != 1:
+    raise SystemExit("ge8100.h: isp_max_tiles_in_flight not found")
+ge = ge.replace(".isp_max_tiles_in_flight = 4U,", ".isp_max_tiles_in_flight = 2U,")
 ge = "/* GE8100: derived from ge8300.h, see gpu/a01vulkan/patch-ge8100.py */\n" + ge
 (info / "ge8100.h").write_text(ge)
 

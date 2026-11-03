@@ -6,6 +6,7 @@
  * apart:
  *   V1  2x2 OPTIMAL texture uploaded with vkCmdCopyBufferToImage (the way Zink uploads)
  *   V2  2x2 LINEAR texture written by the CPU through its mapping (no GPU upload at all)
+ *   V3  no texture: the interpolated coordinate as the colour (V1/V2 read texel (0,0) everywhere)
  * Both are sampled (NEAREST) by a fragment shader over a 64x64 target, read back by a copy.
  * Texels: (0,0) red, (1,0) green, (0,1) blue, (1,1) white; each target quadrant shows one.
  */
@@ -14,6 +15,7 @@
 #include <dlfcn.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include <unistd.h>
 
 #include "tex_spv.h"   /* tex_vert_spv, tex_frag_spv (build-a01metal.sh) */
@@ -146,7 +148,7 @@ init(char *why, size_t n)
 
 /* one variant: returns 1 if all four quadrants are right; px gets the four pixels */
 static int
-run(int linear, uint8_t px[4][4], char *why, size_t n)
+run(int linear, int uvmode, uint8_t px[4][4], char *why, size_t n)
 {
 	/* texture */
 	VkImageCreateInfo ii = { .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, .imageType = VK_IMAGE_TYPE_2D,
@@ -260,8 +262,8 @@ run(int linear, uint8_t px[4][4], char *why, size_t n)
 	}
 	VkShaderModuleCreateInfo mv = { .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = sizeof(tex_vert_spv),
 	                                .pCode = (const uint32_t *)tex_vert_spv };
-	VkShaderModuleCreateInfo mf = { .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = sizeof(tex_frag_spv),
-	                                .pCode = (const uint32_t *)tex_frag_spv };
+	VkShaderModuleCreateInfo mf = { .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = uvmode ? sizeof(uv_frag_spv) : sizeof(tex_frag_spv),
+	                                .pCode = (const uint32_t *)(uvmode ? uv_frag_spv : tex_frag_spv) };
 	VkShaderModule sv, sf;
 	VkPipelineLayoutCreateInfo plci = { .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, .setLayoutCount = 1, .pSetLayouts = &dsl };
 	VkPipelineLayout pl;
@@ -363,31 +365,37 @@ run(int linear, uint8_t px[4][4], char *why, size_t n)
 	int ok = 1;
 	for (int i = 0; i < 4; i++) {
 		memcpy(px[i], (uint8_t *)out_p + 4 * (at[i][1] * 64 + at[i][0]), 4);
-		ok &= memcmp(px[i], texels + 4 * i, 4) == 0;
+		if (uvmode) {
+			/* uv = pixel centre / 64: (16.5/64)*255 = 66 (0x42), (48.5/64)*255 = 193 (0xc1) */
+			int ex = at[i][0] > 32 ? 193 : 66, ey = at[i][1] > 32 ? 193 : 66;
+			ok &= abs(px[i][0] - ex) <= 3 && abs(px[i][1] - ey) <= 3 && px[i][2] == 0 && px[i][3] == 255;
+		} else {
+			ok &= memcmp(px[i], texels + 4 * i, 4) == 0;
+		}
 	}
 	return ok;
 }
 
 /* "V1 OK ..." / "V2 ERRO ..." lines into out; returns marks for the two variants ('+'/'-') */
 void
-a01_vk_tex_test(char *out, size_t n, char marks[2])
+a01_vk_tex_test(char *out, size_t n, char marks[3])
 {
 	char why[96] = "";
-	marks[0] = marks[1] = '-';
+	marks[0] = marks[1] = marks[2] = '-';
 	if (!init(why, sizeof(why))) {
 		snprintf(out, n, "A01 >>> VT: Vulkan nao iniciou (%s) <<<\n", why);
 		return;
 	}
 	size_t used = 0;
-	for (int v = 0; v < 2; v++) {
+	for (int v = 0; v < 3; v++) {
 		uint8_t px[4][4];
 		memset(px, 0, sizeof(px));
 		why[0] = '\0';
-		int ok = run(v, px, why, sizeof(why));
+		int ok = run(v == 1, v == 2, px, why, sizeof(why));
 		marks[v] = ok ? '+' : '-';
 		int k = snprintf(out + used, n - used,
 		                 "A01 >>> V%d (%s): %s %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x%s%s <<<\n", v + 1,
-		                 v ? "linear CPU" : "copia GPU", ok ? "OK" : "ERRO", px[0][0], px[0][1], px[0][2], px[0][3], px[1][0],
+		                 v == 2 ? "coordenada (42 42 / c1 c1)" : v ? "linear CPU" : "copia GPU", ok ? "OK" : "ERRO", px[0][0], px[0][1], px[0][2], px[0][3], px[1][0],
 		                 px[1][1], px[1][2], px[1][3], px[2][0], px[2][1], px[2][2], px[2][3], px[3][0], px[3][1], px[3][2],
 		                 px[3][3], why[0] ? " falhou: " : "", why);
 		if (k > 0 && (size_t)k < n - used) {
