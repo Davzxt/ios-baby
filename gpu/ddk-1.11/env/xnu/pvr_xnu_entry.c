@@ -200,14 +200,14 @@ IMG_CHAR g_a01_tq_fila = '-';
 extern IMG_CHAR g_a01_fw_discard, g_a01_fw_hwr, g_a01_fw_fault;
 extern void a01_fw_trace_scan(PVRSRV_RGXDEV_INFO *psDevInfo);
 
-extern void a01_hwr_fault_str(PVRSRV_RGXDEV_INFO *psDevInfo, IMG_CHAR *buf, IMG_UINT32 size);
-void a01pvr_gpu_fault(char *buf, unsigned size);
+extern void a01_hwr_fault_str(PVRSRV_RGXDEV_INFO *psDevInfo, IMG_CHAR *buf, IMG_UINT32 size, IMG_BOOL bLast);
+void a01pvr_gpu_fault(char *buf, unsigned size, int last);
 void
-a01pvr_gpu_fault(char *buf, unsigned size)
+a01pvr_gpu_fault(char *buf, unsigned size, int last)
 {
 	if (gpsA01DevNode != NULL && gpsA01DevNode->eDevState == PVRSRV_DEVICE_STATE_ACTIVE &&
 	    gpsA01DevNode->pvDevice != NULL) {
-		a01_hwr_fault_str(gpsA01DevNode->pvDevice, buf, size);
+		a01_hwr_fault_str(gpsA01DevNode->pvDevice, buf, size, last ? IMG_TRUE : IMG_FALSE);
 	} else {
 		strlcpy(buf, "-", size);
 	}

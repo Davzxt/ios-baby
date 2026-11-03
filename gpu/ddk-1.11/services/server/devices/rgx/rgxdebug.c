@@ -4639,9 +4639,9 @@ a01_dump_fw_trace_tail(DUMPDEBUG_PRINTF_FUNC *pfnDumpDebugPrintf, void *pvDumpDe
  * A01: the FIRST page fault the firmware recorded (HWR info, never overwritten), in one short
  * line the user can type: DM, R/W, faulting GPU address, requester tag. "-" if none.
  */
-void a01_hwr_fault_str(PVRSRV_RGXDEV_INFO *psDevInfo, IMG_CHAR *buf, IMG_UINT32 size);
+void a01_hwr_fault_str(PVRSRV_RGXDEV_INFO *psDevInfo, IMG_CHAR *buf, IMG_UINT32 size, IMG_BOOL bLast);
 void
-a01_hwr_fault_str(PVRSRV_RGXDEV_INFO *psDevInfo, IMG_CHAR *buf, IMG_UINT32 size)
+a01_hwr_fault_str(PVRSRV_RGXDEV_INFO *psDevInfo, IMG_CHAR *buf, IMG_UINT32 size, IMG_BOOL bLast)
 {
 	RGX_HWRINFO *psBest = NULL;
 	IMG_UINT32 i;
@@ -4654,7 +4654,7 @@ a01_hwr_fault_str(PVRSRV_RGXDEV_INFO *psDevInfo, IMG_CHAR *buf, IMG_UINT32 size)
 	for (i = 0; i < RGXFWIF_HWINFO_MAX; i++)
 	{
 		RGX_HWRINFO *p = &psDevInfo->psRGXFWIfHWRInfoBuf->sHWRInfo[i];
-		if (p->ui32HWRNumber != 0 && (psBest == NULL || p->ui32HWRNumber < psBest->ui32HWRNumber))
+		if (p->ui32HWRNumber != 0 && (psBest == NULL || (bLast ? p->ui32HWRNumber > psBest->ui32HWRNumber : p->ui32HWRNumber < psBest->ui32HWRNumber)))
 		{
 			psBest = p;
 		}

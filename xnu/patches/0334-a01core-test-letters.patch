@@ -1,0 +1,107 @@
+From a2aa36dca1553c12206f755b37dd2504a3155663 Mon Sep 17 00:00:00 2001
+From: a01core <a01core@localhost>
+Date: Mon, 2 Nov 2026 23:10:48 -0300
+Subject: [PATCH] 0334 a01core: code line adds per-test letters
+ (fill/copy/render/triangle); first and last GPU fault
+
+---
+ bsd/dev/a01core_drop.c | 66 ++++++++++++++++++++++++++++++++++++++----
+ 1 file changed, 60 insertions(+), 6 deletions(-)
+
+diff --git a/bsd/dev/a01core_drop.c b/bsd/dev/a01core_drop.c
+index 3e40d06..7b456b0 100644
+--- a/bsd/dev/a01core_drop.c
++++ b/bsd/dev/a01core_drop.c
+@@ -265,7 +265,7 @@ adrop_show(const char *path, vfs_context_t ctx)
+  * package keeps the console.
+  */
+ extern void a01pvr_gpu_code(char *buf);
+-extern void a01pvr_gpu_fault(char *buf, unsigned size);   /* gpu/ddk-1.11/env/xnu/pvr_xnu_entry.c */
++extern void a01pvr_gpu_fault(char *buf, unsigned size, int last);   /* gpu/ddk-1.11/env/xnu/pvr_xnu_entry.c */
+ static char adrop_watch_seen[160];
+ static int adrop_watch_chan;
+ 
+@@ -291,6 +291,51 @@ adrop_first_line(const char *path, char *line, size_t size, vfs_context_t ctx)
+ 	return strncmp(line, "A01METAL: >>>", 13) == 0;
+ }
+ 
++
++/* whole GPU-test report (2600 bytes, NUL padded) for the per-test letters */
++static char adrop_report[2800];
++
++static void
++adrop_read_all(const char *path, vfs_context_t ctx)
++{
++	vnode_t vp = NULLVP;
++	int resid = 0;
++	adrop_report[0] = '\0';
++	if (vnode_open(path, FREAD, 0, 0, &vp, ctx) != 0) {
++		return;
++	}
++	if (vn_rdwr(UIO_READ, vp, (caddr_t)adrop_report, (int)sizeof(adrop_report) - 1, 0, UIO_SYSSPACE, 0,
++	    vfs_context_ucred(ctx), &resid, vfs_context_proc(ctx)) != 0) {
++		resid = (int)sizeof(adrop_report) - 1;
++	}
++	vnode_close(vp, FREAD, ctx);
++	adrop_report[sizeof(adrop_report) - 1 - resid] = '\0';
++}
++
++/* letter for one test: up if the text after `key` starts with "OK", low if not, '-' if absent */
++static char
++adrop_test_letter(const char *key, char up)
++{
++	const char *p = strnstr(adrop_report, key, sizeof(adrop_report));
++	if (p == NULL) {
++		return '-';
++	}
++	p += strlen(key);
++	return (p[0] == 'O' && p[1] == 'K') ? up : (char)(up + ('a' - 'A'));
++}
++
++/* fill result: "origem com N bytes errados": P if N == 0 */
++static char
++adrop_fill_letter(void)
++{
++	const char *p = strnstr(adrop_report, "origem com ", sizeof(adrop_report));
++	if (p == NULL) {
++		return '-';
++	}
++	p += 11;
++	return (p[0] == '0' && p[1] == ' ') ? 'P' : 'p';
++}
++
+ static void
+ adrop_watch_thread(__unused void *arg, __unused wait_result_t wr)
+ {
+@@ -319,14 +364,23 @@ adrop_watch_thread(__unused void *arg, __unused wait_result_t wr)
+ 		 */
+ 		if ((i & 1) == 1) {
+ 			char code[8];
+-			char fault[48];
++			char fault[48], fault2[48];
+ 			a01pvr_gpu_code(code);
+-			a01pvr_gpu_fault(fault, sizeof(fault));
++			a01pvr_gpu_fault(fault, sizeof(fault), 0);
++			a01pvr_gpu_fault(fault2, sizeof(fault2), 1);
+ 			if (fault[0] != '-') {
+-				/* first GPU page fault: DM, R/W, GPU address, requester */
+-				printf("A01 >>> FALHA: %s <<<\n", fault);
++				/* first and last GPU fault: DM, R/W, GPU address, requester */
++				printf("A01 >>> FALHA1: %s <<<\n", fault);
++				if (strcmp(fault, fault2) != 0) {
++					printf("A01 >>> FALHA2: %s <<<\n", fault2);
++				}
+ 			}
+-			printf("A01 >>> CODIGO: %s-%c <<<\n", code, result);
++			/* per test: P/p fill, C/c copy (TESTE 1), R/r render pass (2), T/t triangle (3) */
++			adrop_read_all("/private/var/herolte/autorun.out", ctx);
++			printf("A01 >>> CODIGO: %s-%c-%c%c%c%c <<<\n", code, result, adrop_fill_letter(),
++			    adrop_test_letter("TESTE 1 (copia de memoria): ", 'C'),
++			    adrop_test_letter("TESTE 2 (textura + render pass): ", 'R'),
++			    adrop_test_letter("TESTE 3 (shader simples): ", 'T'));
+ 		}
+ 	}
+ }
+-- 
+2.55.0.windows.5
+
