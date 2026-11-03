@@ -1,0 +1,409 @@
+From 6aed65172807364a9cf14d2138a987a93d63f548 Mon Sep 17 00:00:00 2001
+From: a01core <a01core@localhost>
+Date: Mon, 2 Nov 2026 23:46:53 -0300
+Subject: [PATCH] 0336 a01core touch: Novatek NT36525B host-download driver
+ (SPI0, polled), port of the SM-A013 GPL nt36525 driver
+
+---
+ bsd/dev/a01core_touch.c | 373 +++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 372 insertions(+), 1 deletion(-)
+
+diff --git a/bsd/dev/a01core_touch.c b/bsd/dev/a01core_touch.c
+index e3dad4c..c1e4ed7 100644
+--- a/bsd/dev/a01core_touch.c
++++ b/bsd/dev/a01core_touch.c
+@@ -34,7 +34,7 @@
+  * 0x88/0x8c/0x94, infra_spi0 = bit 1), spi-mt65xx.c (mt6739: enhance timing, must_tx,
+  * 32-byte FIFO, pause mode keeps CS asserted between chunks), mt6739_a01core
+  * input dtsi (spi-max-frequency 5 MHz, mode 0, CS 0, irq GPIO0 low).
+- * The NT36525B (Novatek) panel variant on CS1 is not handled.
++ * The NT36525B (Novatek) panel variant: see "NT36525B host download" below.
+  *
+  * Boot-args: a01touch=0 off, 1 on (default), 2 verbose; a01touch_hz (SPI clock);
+  * a01touch_flipx=1, a01touch_flipy=1, a01touch_swap=1.
+@@ -662,11 +662,382 @@ app_setup(void)
+ 	return error;
+ }
+ 
++
++/* ==== Novatek NT36525B host download (the other A01 Core panel) =============================
++ * Port of Samsung's SM-A013 GPL driver drivers/input/touchscreen/novatek/nt36525 (nt36xxx.c,
++ * nt36xxx_fw_update.c, nt36xxx_mem_map.h), polled from this thread like the TD4150 path.
++ * Same SPI0 bus, mode 0, attention on GPIO0 (active low). The firmware has no flash: every
++ * power-up the host writes firmware/tsp_novatek/nt36525_a01core_tp.bin (GPL tree, passed with
++ * mkpayload.py --blob TouchFirmwareNVT=...) into the chip's SRAM.
++ * Wire format: write = [addr7 | 0x80, data...]; read = [addr7, dummy...], data from the 3rd
++ * byte on; 0xff, addr>>15, addr>>7 selects the 128-byte page of a 24-bit address.
++ * Status lines start with "A01 >>> TOQUE:" so they stay on the quiet console. */
++#define NVT_SWRST_N8_ADDR    0x03F0FEu     /* dtbo novatek,swrst-n8-addr */
++#define NVT_SPI_RD_FAST_ADDR 0x03F310u     /* dtbo novatek,spi-rd-fast-addr */
++#define NVT_ENG_RST_ADDR     0x7FFF80u
++#define NVT_EVENT_BUF        0x11A00u      /* NT36525_memory_map */
++#define NVT_BOOT_RDY         0x1F141u
++#define NVT_POR_CD           0x1F61Cu
++#define NVT_R_ILM_CSUM       0x1BF00u
++#define NVT_EV_RESET         0x60u
++#define NVT_EV_FWINFO        0x78u
++#define NVT_XFER             (63u * 1024u)
++#define NVT_POINTS           65u
++#define NVT_MAX_PARTS        24u
++#define TOUCH_SAY(fmt, ...)  printf("A01 >>> TOQUE: " fmt " <<<\n", ##__VA_ARGS__)
++
++static uint8_t *nvt_tx, *nvt_rx;
++static const uint8_t *nvt_fw;
++static uint32_t nvt_fw_len;
++static struct { uint32_t sram, size, bin, crc; } nvt_part[NVT_MAX_PARTS];
++static uint32_t nvt_nparts;
++static uint32_t nvt_max_x = PANEL_W, nvt_max_y = PANEL_H;
++
++static int
++nvt_write(uint32_t len)
++{
++	nvt_tx[0] |= 0x80;
++	return spi_xfer(nvt_tx, NULL, len);
++}
++
++static int
++nvt_set_page(uint32_t addr)
++{
++	nvt_tx[0] = 0xff;
++	nvt_tx[1] = (uint8_t)(addr >> 15);
++	nvt_tx[2] = (uint8_t)(addr >> 7);
++	return nvt_write(3);
++}
++
++static int
++nvt_write_addr(uint32_t addr, uint8_t v)
++{
++	int error = nvt_set_page(addr);
++	if (!error) {
++		nvt_tx[0] = (uint8_t)(addr & 0x7f);
++		nvt_tx[1] = v;
++		error = nvt_write(2);
++	}
++	return error;
++}
++
++/* n bytes from offset (addr & 0x7f) of the selected page */
++static int
++nvt_read(uint32_t addr, uint8_t *out, uint32_t n)
++{
++	memset(nvt_tx, 0, n + 2);
++	nvt_tx[0] = (uint8_t)(addr & 0x7f);
++	int error = spi_xfer(nvt_tx, nvt_rx, n + 2);
++	if (!error) {
++		memcpy(out, nvt_rx + 2, n);
++	}
++	return error;
++}
++
++static void
++nvt_bootloader_reset(void)
++{
++	(void)nvt_write_addr(NVT_SWRST_N8_ADDR, 0x69);
++	delay(5000);
++	(void)nvt_write_addr(NVT_SPI_RD_FAST_ADDR, 0x00);
++}
++
++static int
++nvt_chip_id(void)
++{
++	uint8_t id[6] = { 0 };
++	for (int retry = 0; retry < 5; retry++) {
++		nvt_bootloader_reset();
++		if (nvt_set_page(0x1F64E) == 0 && nvt_read(0x4E, id, 6) == 0 &&
++		    id[3] == 0x25 && id[4] == 0x65 && id[5] == 0x03) {
++			TOUCH_SAY("NT36525B encontrado (id %02x %02x %02x %02x %02x %02x)", id[0], id[1], id[2],
++			    id[3], id[4], id[5]);
++			return 0;
++		}
++		if (retry == 4) {
++			LOG("NT36525 trim id %02x %02x %02x %02x %02x %02x: not Novatek", id[0], id[1], id[2],
++			    id[3], id[4], id[5]);
++		}
++		t_msleep(10);
++	}
++	return ENXIO;
++}
++
++static uint32_t
++nvt_checksum(const uint8_t *d, uint32_t len)
++{
++	uint32_t s = 0;
++	for (uint32_t i = 0; i <= len; i++) {
++		s += d[i];
++	}
++	s += len;
++	return ~s + 1u;
++}
++
++static int
++nvt_fw_parse(void)
++{
++	DTEntry node;
++	const uint64_t *reg;
++	unsigned int size;
++	if (SecureDTLookupEntry(NULL, "/chosen/memory-map", &node) != kSuccess ||
++	    SecureDTGetProperty(node, "TouchFirmwareNVT", (void const **)&reg, &size) != kSuccess ||
++	    size < 16 || reg[1] < 0x2000) {
++		TOUCH_SAY("sem firmware NT36525 no pacote");
++		return ENOENT;
++	}
++	nvt_fw = (const uint8_t *)ml_static_ptovirt((vm_offset_t)reg[0]);
++	nvt_fw_len = (uint32_t)reg[1];
++	uint32_t need = 0;
++	for (uint32_t s = nvt_fw_len / 4096u; s > 0 && !need; s--) {
++		const uint8_t *f = nvt_fw + s * 4096u - 3u;
++		if (!memcmp(f, "NVT", 3) || !memcmp(f, "MOD", 3)) {
++			need = s * 4096u;
++		}
++	}
++	if (!need || (uint8_t)(nvt_fw[need - 4096u] + nvt_fw[need - 4096u + 1]) != 0xff) {
++		TOUCH_SAY("firmware NT36525 invalido");
++		return EINVAL;
++	}
++	uint32_t end = le32(nvt_fw), info = 0;
++	for (uint32_t pos = 0x30; pos < end; pos += 0x10) {
++		info++;
++	}
++	uint32_t ovly = (nvt_fw[0x28] & 0x10) ? (nvt_fw[0x28] & 0x0fu) : 0;
++	nvt_nparts = 2 + info + ovly;
++	if (nvt_nparts > NVT_MAX_PARTS) {
++		return EINVAL;
++	}
++	for (uint32_t i = 0; i < nvt_nparts; i++) {
++		const uint8_t *h;
++		if (i < 2) {
++			h = nvt_fw + 12u * i;
++			nvt_part[i].bin = le32(h);
++			nvt_part[i].sram = le32(h + 4);
++			nvt_part[i].size = le32(h + 8);
++		} else {
++			h = i < 2 + info ? nvt_fw + 0x30 + 0x10 * (i - 2) : nvt_fw + nvt_part[1].bin + 0x10 * (i - 2 - info);
++			nvt_part[i].sram = le32(h);
++			nvt_part[i].size = le32(h + 4);
++			nvt_part[i].bin = le32(h + 8);
++		}
++		if ((uint64_t)nvt_part[i].bin + nvt_part[i].size >= nvt_fw_len) {
++			TOUCH_SAY("firmware NT36525: secao %u fora do arquivo", i);
++			return EINVAL;
++		}
++		nvt_part[i].crc = nvt_checksum(nvt_fw + nvt_part[i].bin, nvt_part[i].size);
++	}
++	LOG("NT36525 firmware %u bytes, %u partitions", nvt_fw_len, nvt_nparts);
++	return 0;
++}
++
++static int
++nvt_download(void)
++{
++	for (int retry = 0; retry < 3; retry++) {
++		int error = 0;
++		(void)nvt_write_addr(NVT_ENG_RST_ADDR, 0x5a);
++		delay(1000);
++		nvt_bootloader_reset();
++		(void)nvt_write_addr(NVT_EVENT_BUF | NVT_EV_RESET, 0x00);
++		for (uint32_t i = 0; i < nvt_nparts && !error; i++) {
++			uint32_t sram = nvt_part[i].sram, bin = nvt_part[i].bin, left = nvt_part[i].size;
++			if (!left) {
++				continue;
++			}
++			left += 1;                                    /* the driver writes size + 1 bytes */
++			while (left && !error) {
++				uint32_t n = MIN(left, NVT_XFER);
++				error = nvt_set_page(sram);
++				if (!error) {
++					nvt_tx[0] = (uint8_t)(sram & 0x7f);
++					memcpy(nvt_tx + 1, nvt_fw + bin, n);
++					error = nvt_write(n + 1);
++				}
++				sram += n;
++				bin += n;
++				left -= n;
++			}
++		}
++		/* boot ready (NT36525: no hardware CRC) */
++		(void)nvt_write_addr(NVT_BOOT_RDY, 1);
++		delay(5000);
++		(void)nvt_write_addr(NVT_BOOT_RDY, 0);
++		(void)nvt_write_addr(NVT_POR_CD, 0xa0);
++		uint8_t st[5] = { 0 };
++		int ok = 0;
++		(void)nvt_set_page(NVT_EVENT_BUF | NVT_EV_RESET);
++		for (int w = 0; w < 50 && !ok; w++) {
++			if (nvt_read(NVT_EV_RESET, st, 5) == 0 && st[0] >= 0xa0 && st[0] <= 0xaf) {
++				ok = 1;
++			} else {
++				t_msleep(10);
++			}
++		}
++		if (!error && ok) {
++			uint8_t cs[NVT_MAX_PARTS * 4];
++			(void)nvt_set_page(NVT_R_ILM_CSUM);
++			if (nvt_read(NVT_R_ILM_CSUM, cs, nvt_nparts * 4) == 0) {
++				uint32_t bad = 0;
++				for (uint32_t i = 0; i < nvt_nparts; i++) {
++					if (nvt_part[i].size && le32(cs + 4 * i) != nvt_part[i].crc) {
++						bad++;
++					}
++				}
++				if (!bad) {
++					return 0;
++				}
++				LOG("NT36525 checksum mismatch in %u partitions (retry %d)", bad, retry);
++			}
++		} else {
++			LOG("NT36525 download: spi error %d, reset state %#x (retry %d)", error, st[0], retry);
++		}
++	}
++	return EIO;
++}
++
++static void
++nvt_fw_info(void)
++{
++	uint8_t b[16];
++	(void)nvt_set_page(NVT_EVENT_BUF | NVT_EV_FWINFO);
++	if (nvt_read(NVT_EV_FWINFO, b, 16) == 0 && (uint8_t)(b[0] + b[1]) == 0xff) {
++		uint32_t x = ((uint32_t)b[4] << 8) | b[5], y = ((uint32_t)b[6] << 8) | b[7];
++		if (x >= 100 && y >= 100) {
++			nvt_max_x = x;
++			nvt_max_y = y;
++		}
++		TOUCH_SAY("firmware NT36525 v%02x rodando, area %ux%u", b[0], nvt_max_x, nvt_max_y);
++	} else {
++		TOUCH_SAY("firmware NT36525 rodando (info ilegivel, usando %ux%u)", nvt_max_x, nvt_max_y);
++	}
++	(void)nvt_set_page(NVT_EVENT_BUF);
++}
++
++/* one event packet: 10 x { status:2 res:1 id:5, x[11:4], y[11:4], y[3:0] | x[3:0] << 4, area, pressure } */
++static void
++nvt_report(const uint8_t *pd)
++{
++	uint16_t down = 0;
++	for (uint32_t i = 0; i < MAX_FINGERS; i++) {
++		const uint8_t *c = pd + 6 * i;
++		uint32_t id = c[0] >> 3, st = c[0] & 3u;
++		if (id == 0 || id > MAX_FINGERS || (st != 1 && st != 2)) {
++			continue;
++		}
++		id -= 1;
++		int x = (int)(((uint32_t)c[1] << 4) | (c[3] >> 4));
++		int y = (int)(((uint32_t)c[2] << 4) | (c[3] & 0x0fu));
++		if (t_swap) {
++			int tmp = x; x = y; y = tmp;
++		}
++		x = x * PANEL_W / (int)nvt_max_x;
++		y = y * PANEL_H / (int)nvt_max_y;
++		if (t_flipx) {
++			x = PANEL_W - 1 - x;
++		}
++		if (t_flipy) {
++			y = PANEL_H - 1 - y;
++		}
++		x = MAX(0, MIN(PANEL_W - 1, x));
++		y = MAX(0, MIN(PANEL_H - 1, y));
++		down |= (uint16_t)(1u << id);
++		last_x[id] = (int16_t)x;
++		last_y[id] = (int16_t)y;
++		sweet_hid_touch((int)id, 1, x, y);
++	}
++	uint16_t lifted = down_mask_prev & (uint16_t)~down;
++	for (uint32_t i = 0; i < MAX_FINGERS; i++) {
++		if (lifted & (1u << i)) {
++			sweet_hid_touch((int)i, 0, last_x[i], last_y[i]);
++		}
++	}
++	down_mask_prev = down;
++}
++
++/* returns only if the panel is not a Novatek NT36525 (then the TD4150 path runs) */
++static void
++nvt_run(void)
++{
++	nvt_tx = kalloc_data(NVT_XFER + 8, Z_WAITOK | Z_ZERO);
++	nvt_rx = kalloc_data(256, Z_WAITOK | Z_ZERO);
++	if (!nvt_tx || !nvt_rx) {
++		return;
++	}
++	(void)nvt_write_addr(NVT_ENG_RST_ADDR, 0x5a);
++	t_msleep(10);
++	if (nvt_chip_id() != 0) {
++		return;
++	}
++	if (nvt_fw_parse() != 0) {
++		for (;;) {
++			t_msleep(60000);
++		}
++	}
++	for (int attempt = 0;; attempt++) {
++		if (nvt_download() != 0) {
++			TOUCH_SAY("falha ao carregar o firmware (tentativa %d)", attempt + 1);
++			if (attempt >= 4) {
++				for (;;) {
++					t_msleep(60000);
++				}
++			}
++			t_msleep(1000);
++			continue;
++		}
++		nvt_fw_info();
++		TOUCH_SAY("pronto");
++		uint8_t pd[NVT_POINTS];
++		unsigned wdt = 0;
++		for (;;) {
++			if (!attention()) {
++				t_msleep(4);
++				continue;
++			}
++			if (nvt_read(0x00, pd, NVT_POINTS) != 0) {
++				t_msleep(10);
++				continue;
++			}
++			int same = 1;
++			for (int i = 0; i < 6; i++) {
++				if (pd[i] != 0x77) {
++					same = 0;
++				}
++			}
++			if (same) {
++				continue;                                 /* firmware handshake pattern */
++			}
++			int fd = 1;
++			for (int i = 0; i < 6; i++) {
++				if (pd[i] != 0xfd && pd[i] != 0xfe) {
++					fd = 0;
++				}
++			}
++			if (fd && ++wdt > 10) {
++				TOUCH_SAY("firmware reiniciou, recarregando");
++				break;                                    /* watchdog reset: download again */
++			}
++			if (!fd) {
++				wdt = 0;
++			}
++			uint8_t sum = 0;
++			for (uint32_t i = 0; i < NVT_POINTS - 1; i++) {
++				sum += pd[i];
++			}
++			if ((uint8_t)(~sum + 1) != pd[NVT_POINTS - 1] || (pd[0] >> 3) == 0x1e) {
++				continue;                                 /* bad checksum / proximity */
++			}
++			nvt_report(pd);
++		}
++	}
++}
++
+ static void
+ touch_thread(__unused void *arg, __unused wait_result_t wres)
+ {
+ 	int failures = 0;
+ 	t_msleep(1500);
++	nvt_run();             /* Novatek NT36525B panel: never returns */
+ 	msg = kalloc_data(msg_cap, Z_WAITOK | Z_ZERO);
+ 	if (!msg || fw_find() != 0) {
+ 		LOG("touch disabled");
+-- 
+2.55.0.windows.5
+
