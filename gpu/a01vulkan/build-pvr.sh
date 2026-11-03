@@ -23,6 +23,7 @@ fi
 python3 "$MESA/patch-mesa.py" mesa || echo "patch-mesa.py: some S7 patches did not apply to $MESA_TAG"
 python3 "$HERE/patch-ge8100.py" mesa
 python3 "$HERE/patch-pvr-darwin.py" mesa
+python3 "$HERE/patch-a01-sync.py" mesa
 # img-pvr ships only the Android Vulkan headers; Darwin builds also need the beta and Apple ones
 cp -n "$HERE"/vulkan-headers/*.h mesa/include/vulkan/
 cp -R "$HERE/compat/." mesa/include/   # sys/sysmacros.h, linux/const.h, linux/types.h for Darwin
