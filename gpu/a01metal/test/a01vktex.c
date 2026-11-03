@@ -9,7 +9,8 @@
  *   V3  no texture: the interpolated coordinate as the colour (V1/V2 read texel (0,0) everywhere)
  *   V4  a constant varying (0.5, 0.25), smooth     V5  the same constant, flat
  *   V6  gl_FragCoord / 64 as the colour (no varyings)
- * Both are sampled (NEAREST) by a fragment shader over a 64x64 target, read back by a copy.
+ * Both are sampled (NEAREST) by a fragment shader over a 64x64 LINEAR target that the CPU reads
+ * directly (the GPU copy back also depends on per-pixel positions; its first pixel is reported too).
  * Texels: (0,0) red, (1,0) green, (0,1) blue, (1,1) white; each target quadrant shows one.
  */
 #define VK_NO_PROTOTYPES 1
@@ -40,6 +41,7 @@ static VkPhysicalDevice phys;
 static VkDevice dev;
 static VkQueue queue;
 static VkPhysicalDeviceMemoryProperties memp;
+static uint8_t g_vt_copy0[4];
 
 static int
 mem_type(uint32_t bits, VkMemoryPropertyFlags want)
@@ -223,7 +225,7 @@ run(int linear, int uvmode, uint8_t px[4][4], char *why, size_t n)
 	/* target 64x64, render pass, pipeline */
 	VkImageCreateInfo ti = ii;
 	ti.extent = (VkExtent3D){ 64, 64, 1 };
-	ti.tiling = VK_IMAGE_TILING_OPTIMAL;
+	ti.tiling = VK_IMAGE_TILING_LINEAR;
 	ti.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 	ti.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 	VkImage tgt;
@@ -232,7 +234,7 @@ run(int linear, int uvmode, uint8_t px[4][4], char *why, size_t n)
 		return 0;
 	}
 	vkGetImageMemoryRequirements_(dev, tgt, &req);
-	VkDeviceMemory gm = alloc_for(req, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+	VkDeviceMemory gm = alloc_for(req, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 	if (!gm || vkBindImageMemory_(dev, tgt, gm, 0) != VK_SUCCESS) {
 		snprintf(why, n, "memoria do alvo");
 		return 0;
@@ -370,9 +372,22 @@ run(int linear, int uvmode, uint8_t px[4][4], char *why, size_t n)
 	usleep(300000);   /* the fences cap at 2 s; give the copy time to land as A01Metal does */
 
 	static const int at[4][2] = { { 16, 16 }, { 48, 16 }, { 16, 48 }, { 48, 48 } };
+	uint8_t *direct = NULL;
+	VkImageSubresource tsr = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0 };
+	VkSubresourceLayout tlay;
+	vkGetImageSubresourceLayout_(dev, tgt, &tsr, &tlay);
+	if (vkMapMemory_(dev, gm, 0, VK_WHOLE_SIZE, 0, (void **)&direct) != VK_SUCCESS) {
+		direct = NULL;
+	}
+	/* the copy's first pixel, to compare with the direct read */
+	memcpy(g_vt_copy0, (uint8_t *)out_p + 4 * (at[0][1] * 64 + at[0][0]), 4);
 	int ok = 1;
 	for (int i = 0; i < 4; i++) {
-		memcpy(px[i], (uint8_t *)out_p + 4 * (at[i][1] * 64 + at[i][0]), 4);
+		if (direct) {
+			memcpy(px[i], direct + tlay.offset + (size_t)at[i][1] * tlay.rowPitch + 4u * (unsigned)at[i][0], 4);
+		} else {
+			memcpy(px[i], (uint8_t *)out_p + 4 * (at[i][1] * 64 + at[i][0]), 4);
+		}
 		if (uvmode == 2 || uvmode == 3) {
 			/* (0.5, 0.25) -> 0x80 0x40 */
 			ok &= abs(px[i][0] - 128) <= 3 && abs(px[i][1] - 64) <= 3 && px[i][2] == 0 && px[i][3] == 255;
@@ -414,6 +429,14 @@ a01_vk_tex_test(void (*emit)(const char *), void (*step)(int), char marks[6])
 		                 : v == 2 ? "coordenada (42 42 / c1 c1)" : v ? "linear CPU" : "copia GPU", ok ? "OK" : "ERRO", px[0][0], px[0][1], px[0][2], px[0][3], px[1][0],
 		                 px[1][1], px[1][2], px[1][3], px[2][0], px[2][1], px[2][2], px[2][3], px[3][0], px[3][1], px[3][2],
 		                 px[3][3], why[0] ? " falhou: " : "", why);
+		{
+			/* append the GPU copy's first pixel: " c xxxxxxxx" (before the closing marker) */
+			char *end = strstr(out, " <<<");
+			if (end) {
+				snprintf(end, n - (size_t)(end - out), " c %02x%02x%02x%02x <<<\n", g_vt_copy0[0], g_vt_copy0[1],
+				         g_vt_copy0[2], g_vt_copy0[3]);
+			}
+		}
 		emit(out);
 	}
 }

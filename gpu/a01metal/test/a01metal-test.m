@@ -39,7 +39,7 @@ static char g_log[1400];
 static char g_gl_sum[11] = "..........";   /* GL1-GL7, then V1 V2 V3 (a01vktex.c) */
 void a01_vk_tex_test(void (*emit)(const char *), void (*step)(int), char marks[6]);
 /* V3's first and last pixel, for the kernel status block (the V lines scroll away) */
-static char g_v3[24] = "";
+static char g_v3[32] = "";
 static void vt_emit(const char *s);
 static void vt_step(int v);
 static size_t g_len;
@@ -526,9 +526,9 @@ vt_emit(const char *s)
 	/* "A01 >>> V3 (...): ERRO p0 p1 p2 p3 <<<": keep p0 and p3 */
 	if (strncmp(s, "A01 >>> V3 ", 11) == 0) {
 		const char *r = strstr(s, "): ");
-		char p[4][9];
-		if (r && sscanf(r + 3, "%*s %8s %8s %8s %8s", p[0], p[1], p[2], p[3]) == 4) {
-			snprintf(g_v3, sizeof(g_v3), "%s %s", p[0], p[3]);
+		char p[4][9], c[9] = "";
+		if (r && sscanf(r + 3, "%*s %8s %8s %8s %8s c %8s", p[0], p[1], p[2], p[3], c) >= 4) {
+			snprintf(g_v3, sizeof(g_v3), "%s %s c %s", p[0], p[3], c);
 		}
 	}
 }
