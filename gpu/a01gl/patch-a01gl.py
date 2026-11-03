@@ -44,3 +44,33 @@ for path in sorted((mesa / 'src/gallium/drivers/zink').rglob('*.[ch]')):
         hits += 1
         print('patched', path.relative_to(mesa))
 assert hits > 0, 'zink: no "libvulkan.1.dylib" found (Mesa changed how Zink names the loader)'
+
+# Zink inside OSMesa. Mesa links only driver_swrast into libOSMesa, so GALLIUM_ZINK is undefined in
+# osmesa_target.c and GALLIUM_DRIVER=zink finds no driver: every "Zink" package on the phone drew
+# with the CPU (checked: no zink symbol in libOSMesa.8.dylib; the kernel saw no backboardd GPU
+# open). Link driver_zink, and if Zink cannot start, log why (MESA_LOG_FILE, shown on the phone's
+# console) and fall back to softpipe so the UI still comes up.
+edit('src/gallium/targets/osmesa/meson.build',
+     "    osmesa_hero_deps,\n",
+     "    osmesa_hero_deps,\n"
+     "    with_gallium_zink ? driver_zink : [],\n")
+
+edit('src/gallium/auxiliary/target-helpers/sw_helper.h',
+     "#if defined(GALLIUM_ZINK)\n"
+     "   if (screen == NULL && strcmp(driver, \"zink\") == 0)\n"
+     "      screen = zink_create_screen(winsys, config);\n"
+     "#endif\n",
+     "#if defined(GALLIUM_ZINK)\n"
+     "   if (screen == NULL && strcmp(driver, \"zink\") == 0) {\n"
+     "      screen = zink_create_screen(winsys, config);\n"
+     "      mesa_loge(\"A01: zink %s\", screen ? \"ativo (GPU)\" : \"falhou ao abrir a GPU\");\n"
+     "   }\n"
+     "#endif\n")
+edit('src/gallium/auxiliary/target-helpers/sw_helper.h',
+     "      else if (i == 0 && drivers[i][0] != '\\0')\n"
+     "         return NULL;\n",
+     "      else if (i == 0 && drivers[i][0] != '\\0' && strcmp(drivers[i], \"zink\") != 0)\n"
+     "         return NULL;\n")
+edit('src/gallium/auxiliary/target-helpers/sw_helper.h',
+     '#include "util/u_debug.h"\n',
+     '#include "util/u_debug.h"\n#include "util/log.h"\n')
