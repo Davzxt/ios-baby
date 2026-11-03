@@ -400,6 +400,7 @@ crash_handler(int sig, siginfo_t *si, void *ctx)
 	pwrite(g_out, line, n, 0);
 	pwrite(g_out, pad, sizeof(pad), (off_t)n);
 	fsync(g_out);
+	console_write("A01 >>> ", 8);   /* the quiet console shows only "A01 >>>" lines */
 	console_write(line, n);
 	_exit(100 + sig);
 }
