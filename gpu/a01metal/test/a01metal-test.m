@@ -34,6 +34,9 @@
 #define A01_HANG_SECONDS 600   /* 10 min: the Zink UI compiles shaders on the same single CPU */
 
 static char g_log[1400];
+/* GL summary for the kernel status block (first line of autorun.out, between quotes): one mark
+ * per test GL1-GL7, + right, - wrong, ? running, . not run */
+static char g_gl_sum[8] = ".......";
 static size_t g_len;
 static pthread_mutex_t g_mx = PTHREAD_MUTEX_INITIALIZER;
 static int g_out = STDOUT_FILENO;
@@ -145,7 +148,7 @@ snapshot(const char *state, int locked)
 	/* the verdict first, as one line to read off the screen at the next boot's report (which shows
 	 * only the first ~1 KB); the details follow */
 	if (strncmp(state, "fim OK", 6) == 0) {
-		n += (size_t)snprintf(buf + n, sizeof(buf) - n, "A01METAL: >>> RESULTADO: FUNCIONOU (3 de 3 testes OK) <<<\n");
+		n += (size_t)snprintf(buf + n, sizeof(buf) - n, "A01METAL: >>> RESULTADO: FUNCIONOU \"GL %s\" <<<\n", g_gl_sum);
 	} else if (strncmp(state, "fim", 3) == 0 || strncmp(state, "ERRO", 4) == 0) {
 		/* the first kernel call that answered with an error (a01drm), the most useful clue */
 		void *drm1 = dlopen("/private/var/a01/lib/libdrm.2.dylib", RTLD_NOLOAD | RTLD_LAZY);
@@ -563,6 +566,7 @@ gl_zink_test(void)
 		return;
 	}
 	const char *rend = GetString ? GetString(0x1F01) : NULL;   /* GL_RENDERER */
+	g_gl_sum[0] = '?';
 	report("A01 >>> GLT: renderer %.60s <<<\n", rend ? rend : "?");
 
 	uint8_t px[4][4];
@@ -574,6 +578,8 @@ gl_zink_test(void)
 	ReadPixels(32, 32, 1, 1, A01_GL_RGBA, A01_GL_UNSIGNED_BYTE, px[1]);
 	gl_px(a, sizeof(a), px[0]); gl_px(b, sizeof(b), px[1]);
 	report("A01 >>> GL1: branco %s (ffffffff) vermelho %s (ff0000ff) <<<\n", a, b);
+	g_gl_sum[0] = strcmp(a, "ffffffff") == 0 && strcmp(b, "ff0000ff") == 0 ? '+' : '-';
+	g_gl_sum[1] = '?';
 
 	A01MTLStep = "GL2 limpar";
 	ClearColor(0, 0, 0, 1); Clear(A01_GL_COLOR_BUFFER_BIT);
@@ -586,6 +592,8 @@ gl_zink_test(void)
 	ReadPixels(32, 32, 1, 1, A01_GL_RGBA, A01_GL_UNSIGNED_BYTE, px[0]);
 	gl_px(a, sizeof(a), px[0]);
 	report("A01 >>> GL2: quad verde %s (00ff00ff) <<<\n", a);
+	g_gl_sum[1] = strcmp(a, "00ff00ff") == 0 ? '+' : '-';
+	g_gl_sum[2] = '?';
 
 	static const uint8_t tex[16] = { 255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255 };
 	unsigned t = 0;
@@ -612,6 +620,9 @@ gl_zink_test(void)
 	ReadPixels(48, 48, 1, 1, A01_GL_RGBA, A01_GL_UNSIGNED_BYTE, px[3]);
 	gl_px(a, sizeof(a), px[0]); gl_px(b, sizeof(b), px[1]); gl_px(c, sizeof(c), px[2]); gl_px(d, sizeof(d), px[3]);
 	report("A01 >>> GL3: textura %s %s %s %s (ff0000ff 00ff00ff 0000ffff ffffffff) <<<\n", a, b, c, d);
+	g_gl_sum[2] = strcmp(a, "ff0000ff") == 0 && strcmp(b, "00ff00ff") == 0 && strcmp(c, "0000ffff") == 0 &&
+	              strcmp(d, "ffffffff") == 0 ? '+' : '-';
+	g_gl_sum[3] = '?';
 
 	static uint8_t big[720 * 1480 * 4];
 	if (make(ctx, big, A01_GL_UNSIGNED_BYTE, 720, 1480)) {
@@ -621,6 +632,7 @@ gl_zink_test(void)
 		ReadPixels(719, 1479, 1, 1, A01_GL_RGBA, A01_GL_UNSIGNED_BYTE, px[1]);
 		gl_px(a, sizeof(a), px[0]); gl_px(b, sizeof(b), px[1]);
 		report("A01 >>> GL4: tela 720x1480 azul %s %s (0000ffff) <<<\n", a, b);
+		g_gl_sum[3] = strcmp(a, "0000ffff") == 0 && strcmp(b, "0000ffff") == 0 ? '+' : '-';
 	} else {
 		report("A01 >>> GL4: MakeCurrent 720x1480 falhou <<<\n");
 	}
@@ -654,6 +666,7 @@ gl_zink_test(void)
 		}
 		static const char *const names[3] = { "GL5 textura 512 NEAREST", "GL6 textura 512 LINEAR+blend", "GL7 40 texturas 256" };
 		A01MTLStep = names[tl];
+		g_gl_sum[4 + tl] = '?';
 		unsigned bad_rounds = 0;
 		for (unsigned r = 0; r < rounds; r++) {
 			unsigned tx = 0;
@@ -700,6 +713,7 @@ gl_zink_test(void)
 		gl_px(a, sizeof(a), px[0]); gl_px(b, sizeof(b), px[1]); gl_px(c, sizeof(c), px[2]); gl_px(d, sizeof(d), px[3]);
 		report("A01 >>> %.3s: %s erradas %u/%u, ultimo %s %s %s %s <<<\n", names[tl], bad_rounds ? "ERRO" : "OK",
 		       bad_rounds, rounds, a, b, c, d);
+		g_gl_sum[4 + tl] = bad_rounds ? '-' : '+';
 	}
 	A01MTLStep = "GL fim";
 }
