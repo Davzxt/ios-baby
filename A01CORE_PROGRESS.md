@@ -265,3 +265,9 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
   A/B right, C at the screen origin, coordinates were tile-local.
 - patch-a01-screeniter.py: iterate by screen position (X_P/Y_P). Vulkan run 41724953099, commit c9f28de. Untested.
 - Handoff prompt for another agent: docs/prompt-codex-handoff.md; pipeline scripts in tools/a01core-pipeline/.
+
+## 2026-11-03 — screen position units
+- Linear-target direct read (a01vktex): V3 renders varying values; the GPU copy back (TQ) returned a wrong constant.
+- Halved V3: 4141 at (16,16), c0c0 at (48,48) = exactly 2x: X_P/Y_P count half pixels on the GE8100.
+  V6 (gl_FragCoord) 0: the ALU path iterated POS.xy, which has no coefficients.
+- patch-a01-aluiter.py now scales X_P/Y_P by 0.5 and returns them for gl_FragCoord.xy. Vulkan run 41739185875. Untested.
