@@ -189,6 +189,10 @@ snapshot(const char *state, int locked)
 
 static void
 report(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+/* GLT/GLx result lines, kept so they can be shown again (the quiet console scrolls them away) */
+static char g_gl_lines[2048];
+static size_t g_gl_len;
+static int g_zk_quiet;
 static void
 report(const char *fmt, ...)
 {
@@ -198,7 +202,14 @@ report(const char *fmt, ...)
 	char line[512];
 	int k = vsnprintf(line, sizeof(line), fmt, ap);
 	size_t len = k < 0 ? 0 : MIN((size_t)k, sizeof(line) - 1);
-	console_write(line, len);
+	if (strncmp(line, "A01 >>> ZK:", 11) != 0 || !g_zk_quiet) {
+		console_write(line, len);
+	}
+	if (strncmp(line, "A01 >>> GL", 10) == 0 && g_gl_len + len < sizeof(g_gl_lines)) {
+		memcpy(g_gl_lines + g_gl_len, line, len);
+		g_gl_len += len;
+		g_gl_lines[g_gl_len] = ' ';
+	}
 	if (len > 0 && g_len < sizeof(g_log) - 1) {
 		size_t room = sizeof(g_log) - 1 - g_len;
 		memcpy(g_log + g_len, line, MIN(len, room));
@@ -1027,11 +1038,17 @@ int main(int argc, char **argv)
 			report("A01METAL: >>> RESULTADO: FALHOU (%d de 3 testes com ERRO, veja as linhas TESTE acima) <<<\n", failures);
 		}
 		alarm(A01_HANG_SECONDS);
+		g_zk_quiet = 1;   /* from here on the screen is for the GL results */
 		gl_zink_test();
 		alarm(0);
 		/* keep showing Zink's log lines (backboardd may start the UI after the tests) */
 		for (unsigned i = 0; i < 300; i++) {
 			zink_log_poll();
+			if (i % 10 == 0 && g_gl_len) {   /* every 20 s: the GL results again, so they stay on screen */
+				pthread_mutex_lock(&g_mx);
+				console_write(g_gl_lines, g_gl_len);
+				pthread_mutex_unlock(&g_mx);
+			}
 			sleep(2);
 		}
 		return failures;   /* the report stays: the next boot shows the verdict line first */
