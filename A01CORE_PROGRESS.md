@@ -259,3 +259,9 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
   So a varying that differs between vertices iterates to 0: perspective-correct iteration is broken on the GE8100.
 - Fixes: GE8100 isp_max_tiles_in_flight 2 (its IPP pipes); patch-a01-nopersp.py iterates smooth varyings linearly
   on Darwin (UI is 2D, w = 1; A01_PVR_PERSP=1 restores). Vulkan run 41698871722. Untested on the phone.
+
+## 2026-11-03 — ALU interpolation
+- patch-a01-aluiter.py (C + A*x + B*y by ALU): UI blue+noise -> black; V3 read 020200ff at (16,16) and (48,48):
+  A/B right, C at the screen origin, coordinates were tile-local.
+- patch-a01-screeniter.py: iterate by screen position (X_P/Y_P). Vulkan run 41724953099, commit c9f28de. Untested.
+- Handoff prompt for another agent: docs/prompt-codex-handoff.md; pipeline scripts in tools/a01core-pipeline/.
