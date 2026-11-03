@@ -241,6 +241,13 @@ watcher(void *arg)
 			console_write(s, n > 0 ? (size_t)MIN((size_t)n, sizeof(s) - 1) : 0);
 			if (A01MTLStep == last_step) {
 				console_write(g_where, strnlen(g_where, sizeof(g_where)));
+				/* quiet console: only "A01 >>>" lines show, so repeat the stuck GL step + code */
+				if (strncmp(A01MTLStep, "GL", 2) == 0) {
+					char q[200];
+					int qn = snprintf(q, sizeof(q), "A01 >>> PRESO: %s ha %ld s, CODIGO %s <<<\n", A01MTLStep,
+					                  (long)(time(NULL) - step_since), g_code);
+					console_write(q, qn > 0 ? (size_t)MIN((size_t)qn, sizeof(q) - 1) : 0);
+				}
 				void *drm = dlopen("/private/var/a01/lib/libdrm.2.dylib", RTLD_NOLOAD | RTLD_LAZY);
 				void (*dump)(FILE *) = drm ? (void (*)(FILE *))dlsym(drm, "a01drm_trace_dump") : NULL;
 				char d[600];
@@ -556,21 +563,27 @@ gl_zink_test(void)
 	gl_px(a, sizeof(a), px[0]); gl_px(b, sizeof(b), px[1]);
 	report("A01 >>> GL1: branco %s (ffffffff) vermelho %s (ff0000ff) <<<\n", a, b);
 
+	A01MTLStep = "GL2 limpar";
 	ClearColor(0, 0, 0, 1); Clear(A01_GL_COLOR_BUFFER_BIT);
+	A01MTLStep = "GL2 desenhar quad";
 	Color4f(0, 1, 0, 1);
 	Begin(A01_GL_QUADS); Vertex2f(-1, -1); Vertex2f(1, -1); Vertex2f(1, 1); Vertex2f(-1, 1); End();
+	A01MTLStep = "GL2 glFinish (GPU)";
 	Finish();
+	A01MTLStep = "GL2 ler pixel";
 	ReadPixels(32, 32, 1, 1, A01_GL_RGBA, A01_GL_UNSIGNED_BYTE, px[0]);
 	gl_px(a, sizeof(a), px[0]);
 	report("A01 >>> GL2: quad verde %s (00ff00ff) <<<\n", a);
 
 	static const uint8_t tex[16] = { 255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255 };
 	unsigned t = 0;
+	A01MTLStep = "GL3 criar textura";
 	GenTextures(1, &t);
 	BindTexture(A01_GL_TEXTURE_2D, t);
 	TexParameteri(A01_GL_TEXTURE_2D, A01_GL_TEXTURE_MIN_FILTER, (int)A01_GL_NEAREST);
 	TexParameteri(A01_GL_TEXTURE_2D, A01_GL_TEXTURE_MAG_FILTER, (int)A01_GL_NEAREST);
 	TexImage2D(A01_GL_TEXTURE_2D, 0, (int)A01_GL_RGBA, 2, 2, 0, A01_GL_RGBA, A01_GL_UNSIGNED_BYTE, tex);
+	A01MTLStep = "GL3 desenhar com textura";
 	Enable(A01_GL_TEXTURE_2D);
 	Color4f(1, 1, 1, 1);
 	ClearColor(0, 0, 0, 1); Clear(A01_GL_COLOR_BUFFER_BIT);
@@ -590,6 +603,7 @@ gl_zink_test(void)
 
 	static uint8_t big[720 * 1480 * 4];
 	if (make(ctx, big, A01_GL_UNSIGNED_BYTE, 720, 1480)) {
+		A01MTLStep = "GL4 tela grande";
 		ClearColor(0, 0, 1, 1); Clear(A01_GL_COLOR_BUFFER_BIT); Finish();
 		ReadPixels(0, 0, 1, 1, A01_GL_RGBA, A01_GL_UNSIGNED_BYTE, px[0]);
 		ReadPixels(719, 1479, 1, 1, A01_GL_RGBA, A01_GL_UNSIGNED_BYTE, px[1]);
