@@ -786,7 +786,8 @@ static PVRSRV_ERROR RGXShrinkFreeList(PDLLIST_NODE pListHeader,
 		/* remove block from freelist list */
 
 		/* Unwrite Freelist with Memory Block physical addresses */
-		eError = PMRUnwritePMPageList(psPMRNode->psPageList);
+		/* A01: NULL after a failed reconstruction write (see _RGXFreeListReconstruction) */
+		eError = psPMRNode->psPageList ? PMRUnwritePMPageList(psPMRNode->psPageList) : PVRSRV_OK;
 		if (eError != PVRSRV_OK)
 		{
 			PVR_DPF((PVR_DBG_ERROR,
