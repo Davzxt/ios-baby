@@ -684,10 +684,13 @@ PVRSRV_ERROR PVRSRVRGXSubmitTransferKM(RGX_SERVER_TQ_CONTEXT	*psTransferContext,
 		static IMG_UINT32 ui32A01TQ;
 		if (ui32A01TQ++ < 24 && ui32PrepareCount > 0)
 		{
+			extern void A01CCBOffsets(RGX_CLIENT_CCB *, IMG_UINT32 *, IMG_UINT32 *);
 			extern int printf(const char *, ...);
-			printf("A01CORE PVR: TQ submit #%u n=%u flags0 %x size0 %u fence %d tl3d %d\n", ui32A01TQ,
+			IMG_UINT32 r3 = 0, w3 = 0;
+			A01CCBOffsets(FWCommonContextGetClientCCB(psTransferContext->s3DData.psServerCommonContext), &r3, &w3);
+			printf("A01CORE PVR: TQ submit #%u n=%u flags0 %x size0 %u fence %d tl3d %d; TQ3D cCCB r%u/w%u\n", ui32A01TQ,
 			       ui32PrepareCount, pui32TQPrepareFlags[0], paui32FWCommandSize[0], (int)iCheckFence,
-			       (int)i3DUpdateTimeline);
+			       (int)i3DUpdateTimeline, r3, w3);
 		}
 	}
 

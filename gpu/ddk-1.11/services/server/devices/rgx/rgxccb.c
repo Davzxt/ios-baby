@@ -2511,3 +2511,11 @@ void DumpStalledContextInfo(PVRSRV_RGXDEV_INFO *psDevInfo)
 /******************************************************************************
  End of file (rgxccb.c)
 ******************************************************************************/
+
+/* A01: the firmware's read offset and the host's write offset of a client CCB (logs) */
+void A01CCBOffsets(RGX_CLIENT_CCB *psClientCCB, IMG_UINT32 *pui32Read, IMG_UINT32 *pui32Write);
+void A01CCBOffsets(RGX_CLIENT_CCB *psClientCCB, IMG_UINT32 *pui32Read, IMG_UINT32 *pui32Write)
+{
+	*pui32Read = (psClientCCB && psClientCCB->psClientCCBCtrl) ? psClientCCB->psClientCCBCtrl->ui32ReadOffset : 0xffffffffU;
+	*pui32Write = psClientCCB ? psClientCCB->ui32HostWriteOffset : 0xffffffffU;
+}

@@ -4516,12 +4516,36 @@ void RGXDumpFirmwareTrace(DUMPDEBUG_PRINTF_FUNC *pfnDumpDebugPrintf,
 static IMG_UINT32 a01_ft_lines, a01_ft_skip;
 static DUMPDEBUG_PRINTF_FUNC *a01_ft_real;
 
+/* The power monitor and MTS interrupt lines repeat every few ms and pushed the kicks and
+ * command processing out of the tail on the phone: leave them out. */
+static IMG_BOOL
+a01_ft_noise(const IMG_CHAR *s)
+{
+	for (; *s != '\0'; s++)
+	{
+		if (s[0] == '-' && ((s[1] == 'P' && s[2] == 'O' && s[3] == 'W') ||
+		                    (s[1] == 'M' && s[2] == 'T' && s[3] == 'S')) && s[4] == '>')
+		{
+			return IMG_TRUE;
+		}
+	}
+	return IMG_FALSE;
+}
+
 static void
 a01_ft_count(void *pvDumpDebugFile, const IMG_CHAR *pszFormat, ...)
 {
+	IMG_CHAR szLine[PVR_MAX_DEBUG_MESSAGE_LEN];
+	va_list ap;
+
 	(void)pvDumpDebugFile;
-	(void)pszFormat;
-	a01_ft_lines++;
+	va_start(ap, pszFormat);
+	OSVSNPrintf(szLine, sizeof(szLine), pszFormat, ap);
+	va_end(ap);
+	if (!a01_ft_noise(szLine))
+	{
+		a01_ft_lines++;
+	}
 }
 
 static void
@@ -4530,14 +4554,18 @@ a01_ft_tail(void *pvDumpDebugFile, const IMG_CHAR *pszFormat, ...)
 	IMG_CHAR szLine[PVR_MAX_DEBUG_MESSAGE_LEN];
 	va_list ap;
 
+	va_start(ap, pszFormat);
+	OSVSNPrintf(szLine, sizeof(szLine), pszFormat, ap);
+	va_end(ap);
+	if (a01_ft_noise(szLine))
+	{
+		return;
+	}
 	if (a01_ft_skip > 0)
 	{
 		a01_ft_skip--;
 		return;
 	}
-	va_start(ap, pszFormat);
-	OSVSNPrintf(szLine, sizeof(szLine), pszFormat, ap);
-	va_end(ap);
 	/* as PVR_DUMPDEBUG_LOG: no printer means the kernel log */
 	if (a01_ft_real != NULL)
 	{
