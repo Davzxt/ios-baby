@@ -196,7 +196,7 @@ snapshot(const char *state, int locked)
 static void
 report(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 /* GLT/GLx result lines, kept so they can be shown again (the quiet console scrolls them away) */
-static char g_gl_lines[2048];
+static char g_gl_lines[4096];
 static size_t g_gl_len;
 static int g_zk_quiet;
 static void
@@ -211,7 +211,7 @@ report(const char *fmt, ...)
 	if (strncmp(line, "A01 >>> ZK:", 11) != 0 || !g_zk_quiet) {
 		console_write(line, len);
 	}
-	if (strncmp(line, "A01 >>> GL", 10) == 0 && g_gl_len + len < sizeof(g_gl_lines)) {
+	if ((strncmp(line, "A01 >>> GL", 10) == 0 || (strncmp(line, "A01 >>> V", 9) == 0 && line[9] >= '1' && line[9] <= '6')) && g_gl_len + len < sizeof(g_gl_lines)) {
 		memcpy(g_gl_lines + g_gl_len, line, len);
 		g_gl_len += len;
 		g_gl_lines[g_gl_len] = ' ';
