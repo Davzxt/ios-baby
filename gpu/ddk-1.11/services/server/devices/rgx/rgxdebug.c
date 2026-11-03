@@ -4635,6 +4635,71 @@ a01_dump_fw_trace_tail(DUMPDEBUG_PRINTF_FUNC *pfnDumpDebugPrintf, void *pvDumpDe
 }
 
 
+/*
+ * A01: the FIRST page fault the firmware recorded (HWR info, never overwritten), in one short
+ * line the user can type: DM, R/W, faulting GPU address, requester tag. "-" if none.
+ */
+void a01_hwr_fault_str(PVRSRV_RGXDEV_INFO *psDevInfo, IMG_CHAR *buf, IMG_UINT32 size);
+void
+a01_hwr_fault_str(PVRSRV_RGXDEV_INFO *psDevInfo, IMG_CHAR *buf, IMG_UINT32 size)
+{
+	RGX_HWRINFO *psBest = NULL;
+	IMG_UINT32 i;
+
+	OSSNPrintf(buf, size, "-");
+	if (psDevInfo == NULL || psDevInfo->psRGXFWIfHWRInfoBuf == NULL)
+	{
+		return;
+	}
+	for (i = 0; i < RGXFWIF_HWINFO_MAX; i++)
+	{
+		RGX_HWRINFO *p = &psDevInfo->psRGXFWIfHWRInfoBuf->sHWRInfo[i];
+		if (p->ui32HWRNumber != 0 && (psBest == NULL || p->ui32HWRNumber < psBest->ui32HWRNumber))
+		{
+			psBest = p;
+		}
+	}
+	if (psBest == NULL)
+	{
+		return;
+	}
+	if (psBest->eHWRType == RGX_HWRTYPE_BIF0FAULT || psBest->eHWRType == RGX_HWRTYPE_BIF1FAULT ||
+	    psBest->eHWRType == RGX_HWRTYPE_TEXASBIF0FAULT)
+	{
+		IMG_UINT64 ui64Req = psBest->uHWRData.sBIFInfo.ui64BIFReqStatus;
+		IMG_CHAR *pszTagID, *pszTagSB;
+		IMG_CHAR aszScratch[RGX_DEBUG_STR_SIZE];
+		IMG_BOOL bRead;
+		IMG_UINT32 ui32TagSB, ui32TagID;
+		IMG_UINT64 ui64Addr = ((ui64Req & ~RGX_CR_BIF_FAULT_BANK0_REQ_STATUS_ADDRESS_CLRMSK) >>
+			RGX_CR_BIF_FAULT_BANK0_REQ_STATUS_ADDRESS_SHIFT) << RGX_CR_BIF_FAULT_BANK0_REQ_STATUS_ADDRESS_ALIGNSHIFT;
+		if (RGX_IS_FEATURE_SUPPORTED(psDevInfo, XE_MEMORY_HIERARCHY))
+		{
+			bRead = (ui64Req & RGX_CR_BIF_FAULT_BANK0_REQ_STATUS__XE_MEM__RNW_EN) != 0;
+			ui32TagSB = (ui64Req & ~RGX_CR_BIF_FAULT_BANK0_REQ_STATUS__XE_MEM__TAG_SB_CLRMSK) >>
+				RGX_CR_BIF_FAULT_BANK0_REQ_STATUS__XE_MEM__TAG_SB_SHIFT;
+			ui32TagID = (ui64Req & ~RGX_CR_BIF_FAULT_BANK0_REQ_STATUS__XE_MEM__TAG_ID_CLRMSK) >>
+				RGX_CR_BIF_FAULT_BANK0_REQ_STATUS__XE_MEM__TAG_ID_SHIFT;
+		}
+		else
+		{
+			bRead = (ui64Req & RGX_CR_BIF_FAULT_BANK0_REQ_STATUS_RNW_EN) != 0;
+			ui32TagSB = (ui64Req & ~RGX_CR_BIF_FAULT_BANK0_REQ_STATUS_TAG_SB_CLRMSK) >>
+				RGX_CR_BIF_FAULT_BANK0_REQ_STATUS_TAG_SB_SHIFT;
+			ui32TagID = (ui64Req & ~RGX_CR_BIF_FAULT_BANK0_REQ_STATUS_TAG_ID_CLRMSK) >>
+				RGX_CR_BIF_FAULT_BANK0_REQ_STATUS_TAG_ID_SHIFT;
+		}
+		_RGXDecodeBIFReqTags(psDevInfo, (RGXDBG_BIF_ID)RGXFWIF_HWRTYPE_BIF_BANK_GET(psBest->eHWRType),
+		                     ui32TagID, ui32TagSB, &pszTagID, &pszTagSB, &aszScratch[0], RGX_DEBUG_STR_SIZE);
+		OSSNPrintf(buf, size, "DM%u %c %010llx %.8s", (unsigned)psBest->eDM, bRead ? 'R' : 'W',
+		           (unsigned long long)ui64Addr, pszTagID ? pszTagID : "?");
+	}
+	else
+	{
+		OSSNPrintf(buf, size, "DM%u T%u", (unsigned)psBest->eDM, (unsigned)psBest->eHWRType);
+	}
+}
+
 void a01_fw_trace_scan(PVRSRV_RGXDEV_INFO *psDevInfo);
 void
 a01_fw_trace_scan(PVRSRV_RGXDEV_INFO *psDevInfo)
