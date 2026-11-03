@@ -485,7 +485,7 @@ zink_log_thread(void *arg)
  * colours drawn and read back, one console line per step, so wrong colours or failed texture
  * sampling show without photos. The UI faulted with TCU reads of garbage texture addresses.
  *   GL1 clears (white, red), GL2 a flat green quad, GL3 a 2x2 texture (red, green, blue, white)
- *   on a quad, GL4 a 720x1480 clear (screen size).
+ *   on a quad, GL4 a 720x1480 clear (screen size), GL5-GL7 UI-like textures (below).
  */
 typedef void *(*a01_osm_create_fn)(unsigned format, int depth, int stencil, int accum, void *share);
 typedef unsigned char (*a01_osm_make_fn)(void *ctx, void *buf, unsigned type, int w, int h);
@@ -613,6 +613,84 @@ gl_zink_test(void)
 	} else {
 		report("A01 >>> GL4: MakeCurrent 720x1480 falhou <<<\n");
 	}
+
+	/*
+	 * GL5-GL7: textures like the UI's (the UI faults with TCU reads of garbage addresses while the
+	 * 2x2 texture of GL3 is fine). Each test fills quadrants red/green/blue/white and reads them back.
+	 *   GL5 512x512 NEAREST (texture spans many 4K GPU pages / 16K CPU pages)
+	 *   GL6 512x512 LINEAR + CLAMP_TO_EDGE + blending (CoreAnimation's sampler state)
+	 *   GL7 40 textures of 256x256 created, drawn and deleted in turn (UI churn: memory reuse)
+	 */
+	if (!make(ctx, small, A01_GL_UNSIGNED_BYTE, 64, 64)) {
+		report("A01 >>> GL5: MakeCurrent 64x64 falhou <<<\n");
+		A01MTLStep = "GL fim";
+		return;
+	}
+	void (*DeleteTextures)(int, const unsigned *) = (__typeof__(DeleteTextures))proc("glDeleteTextures");
+	void (*BlendFunc)(unsigned, unsigned) = (__typeof__(BlendFunc))proc("glBlendFunc");
+	static uint8_t q[512 * 512 * 4];
+	for (unsigned tl = 0; tl < 3; tl++) {
+		unsigned sz = tl == 2 ? 256 : 512, rounds = tl == 2 ? 40 : 1;
+		for (unsigned y = 0; y < sz; y++) {
+			for (unsigned x = 0; x < sz; x++) {
+				uint8_t *p = q + 4 * (y * sz + x);
+				int top = y >= sz / 2, right = x >= sz / 2;
+				p[0] = (!top && !right) || (top && right) ? 255 : 0;
+				p[1] = (!top && right) || (top && right) ? 255 : 0;
+				p[2] = top ? 255 : 0;
+				p[3] = 255;
+			}
+		}
+		static const char *const names[3] = { "GL5 textura 512 NEAREST", "GL6 textura 512 LINEAR+blend", "GL7 40 texturas 256" };
+		A01MTLStep = names[tl];
+		unsigned bad_rounds = 0;
+		for (unsigned r = 0; r < rounds; r++) {
+			unsigned tx = 0;
+			GenTextures(1, &tx);
+			BindTexture(A01_GL_TEXTURE_2D, tx);
+			unsigned filt = tl == 1 ? 0x2601u /* GL_LINEAR */ : A01_GL_NEAREST;
+			TexParameteri(A01_GL_TEXTURE_2D, A01_GL_TEXTURE_MIN_FILTER, (int)filt);
+			TexParameteri(A01_GL_TEXTURE_2D, A01_GL_TEXTURE_MAG_FILTER, (int)filt);
+			if (tl == 1) {
+				TexParameteri(A01_GL_TEXTURE_2D, 0x2802u, 0x812F);   /* WRAP_S = CLAMP_TO_EDGE */
+				TexParameteri(A01_GL_TEXTURE_2D, 0x2803u, 0x812F);   /* WRAP_T */
+			}
+			TexImage2D(A01_GL_TEXTURE_2D, 0, (int)A01_GL_RGBA, (int)sz, (int)sz, 0, A01_GL_RGBA, A01_GL_UNSIGNED_BYTE, q);
+			Enable(A01_GL_TEXTURE_2D);
+			if (tl == 1 && BlendFunc) {
+				Enable(0x0BE2u);                    /* GL_BLEND */
+				BlendFunc(1u, 0x0303u);             /* ONE, ONE_MINUS_SRC_ALPHA (premultiplied, as CA) */
+			}
+			Color4f(1, 1, 1, 1);
+			ClearColor(0, 0, 0, 1); Clear(A01_GL_COLOR_BUFFER_BIT);
+			Begin(A01_GL_QUADS);
+			TexCoord2f(0, 0); Vertex2f(-1, -1); TexCoord2f(1, 0); Vertex2f(1, -1);
+			TexCoord2f(1, 1); Vertex2f(1, 1); TexCoord2f(0, 1); Vertex2f(-1, 1);
+			End();
+			Finish();
+			Disable(0x0BE2u);
+			Disable(A01_GL_TEXTURE_2D);
+			ReadPixels(16, 16, 1, 1, A01_GL_RGBA, A01_GL_UNSIGNED_BYTE, px[0]);
+			ReadPixels(48, 16, 1, 1, A01_GL_RGBA, A01_GL_UNSIGNED_BYTE, px[1]);
+			ReadPixels(16, 48, 1, 1, A01_GL_RGBA, A01_GL_UNSIGNED_BYTE, px[2]);
+			ReadPixels(48, 48, 1, 1, A01_GL_RGBA, A01_GL_UNSIGNED_BYTE, px[3]);
+			static const uint32_t want[4] = { 0xff0000ffu, 0x00ff00ffu, 0x0000ffffu, 0xffffffffu };
+			for (unsigned i = 0; i < 4; i++) {
+				uint32_t got = (uint32_t)px[i][0] << 24 | (uint32_t)px[i][1] << 16 | (uint32_t)px[i][2] << 8 | px[i][3];
+				if (got != want[i]) {
+					bad_rounds++;
+					break;
+				}
+			}
+			if (DeleteTextures) {
+				DeleteTextures(1, &tx);
+			}
+		}
+		gl_px(a, sizeof(a), px[0]); gl_px(b, sizeof(b), px[1]); gl_px(c, sizeof(c), px[2]); gl_px(d, sizeof(d), px[3]);
+		report("A01 >>> %.3s: %s erradas %u/%u, ultimo %s %s %s %s <<<\n", names[tl], bad_rounds ? "ERRO" : "OK",
+		       bad_rounds, rounds, a, b, c, d);
+	}
+	A01MTLStep = "GL fim";
 }
 
 static void
