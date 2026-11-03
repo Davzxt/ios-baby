@@ -53,7 +53,7 @@ assert hits > 0, 'zink: no "libvulkan.1.dylib" found (Mesa changed how Zink name
 edit('src/gallium/targets/osmesa/meson.build',
      "    osmesa_hero_deps,\n",
      "    osmesa_hero_deps,\n"
-     "    with_gallium_zink ? driver_zink : [],\n")
+     "    with_gallium_zink ? [driver_zink, idep_xmlconfig] : [],\n")
 
 edit('src/gallium/auxiliary/target-helpers/sw_helper.h',
      "#if defined(GALLIUM_ZINK)\n"
