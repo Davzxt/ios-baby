@@ -423,6 +423,55 @@ wait_for_install(char **argv)
 	}
 }
 
+/*
+ * Zink's own log: backboardd's Mesa writes /private/var/tmp/a01gl.log (MESA_LOG_FILE, set by the
+ * kernel for herogl=1); the kernel shows only its last line. Print every new line on the console
+ * with "A01 >>> ZK:" so the reason Zink cannot open the GPU is readable in one boot.
+ */
+static off_t g_zk_off;
+
+static void
+zink_log_poll(void)
+{
+	int fd = open("/private/var/tmp/a01gl.log", O_RDONLY);
+	if (fd < 0) {
+		return;
+	}
+	static char buf[4096];
+	static size_t have;
+	ssize_t n;
+	while ((n = pread(fd, buf + have, sizeof(buf) - 1 - have, g_zk_off)) > 0) {
+		g_zk_off += n;
+		have += (size_t)n;
+		buf[have] = '\0';
+		char *line = buf, *nl;
+		while ((nl = strchr(line, '\n')) != NULL) {
+			*nl = '\0';
+			if (line[0]) {
+				report("A01 >>> ZK: %.150s <<<\n", line);
+			}
+			line = nl + 1;
+		}
+		have = strlen(line);
+		memmove(buf, line, have + 1);
+		if (have >= sizeof(buf) - 1) {
+			have = 0;
+		}
+	}
+	close(fd);
+}
+
+static void *
+zink_log_thread(void *arg)
+{
+	(void)arg;
+	for (unsigned i = 0; i < 600; i++) {   /* every 2 s for 20 minutes */
+		zink_log_poll();
+		sleep(2);
+	}
+	return NULL;
+}
+
 static void
 install_diagnostics(void)
 {
@@ -449,6 +498,8 @@ install_diagnostics(void)
 	}
 	pthread_t w;
 	pthread_create(&w, NULL, watcher, NULL);
+	pthread_t zk;
+	pthread_create(&zk, NULL, zink_log_thread, NULL);
 	alarm(A01_HANG_SECONDS);
 }
 
@@ -753,6 +804,11 @@ int main(int argc, char **argv)
 			report("A01METAL: >>> RESULTADO: FUNCIONOU (3 de 3 testes OK) <<<\n");
 		} else {
 			report("A01METAL: >>> RESULTADO: FALHOU (%d de 3 testes com ERRO, veja as linhas TESTE acima) <<<\n", failures);
+		}
+		/* keep showing Zink's log lines (backboardd may start the UI after the tests) */
+		for (unsigned i = 0; i < 300; i++) {
+			zink_log_poll();
+			sleep(2);
 		}
 		return failures;   /* the report stays: the next boot shows the verdict line first */
 	}
