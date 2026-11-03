@@ -34,12 +34,54 @@ icd(void)
 	return icd_gipa;
 }
 
+/*
+ * Zink also resolves vkGetDeviceProcAddr from the loader library itself ("ZINK: failed to get proc
+ * address" on the phone when it was missing). The ICD hands it out per instance, so remember the
+ * last instance Zink asked about and fetch the ICD's function from it on first use.
+ */
+__attribute__((visibility("default"))) a01_vk_void_fn vkGetDeviceProcAddr(void *device, const char *name);
+
+typedef a01_vk_void_fn (*a01_gdpa_fn)(void *device, const char *name);
+static void *last_instance;
+static a01_gdpa_fn icd_gdpa;
+
 a01_vk_void_fn
 vkGetInstanceProcAddr(void *instance, const char *name)
 {
 	if (name != NULL && strcmp(name, "vkGetInstanceProcAddr") == 0) {
 		return (a01_vk_void_fn)vkGetInstanceProcAddr;
 	}
+	if (name != NULL && strcmp(name, "vkGetDeviceProcAddr") == 0) {
+		if (instance != NULL) {
+			last_instance = instance;
+		}
+		return (a01_vk_void_fn)vkGetDeviceProcAddr;
+	}
+	if (instance != NULL) {
+		last_instance = instance;
+	}
 	a01_gipa_fn g = icd();
 	return g ? g(instance, name) : NULL;
+}
+
+a01_vk_void_fn
+vkGetDeviceProcAddr(void *device, const char *name)
+{
+	if (name != NULL && strcmp(name, "vkGetDeviceProcAddr") == 0) {
+		return (a01_vk_void_fn)vkGetDeviceProcAddr;
+	}
+	if (icd_gdpa == NULL) {
+		a01_gipa_fn g = icd();
+		if (g != NULL) {
+			icd_gdpa = (a01_gdpa_fn)g(last_instance, "vkGetDeviceProcAddr");
+			if (icd_gdpa == NULL && last_instance != NULL) {
+				icd_gdpa = (a01_gdpa_fn)g(NULL, "vkGetDeviceProcAddr");
+			}
+		}
+		if (icd_gdpa == NULL) {
+			fprintf(stderr, "a01vkloader: no vkGetDeviceProcAddr from the ICD\n");
+			return NULL;
+		}
+	}
+	return icd_gdpa(device, name);
 }
