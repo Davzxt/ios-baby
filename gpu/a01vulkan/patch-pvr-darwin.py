@@ -360,3 +360,65 @@ if "A01: DOUTD cache bypass" not in t:
         t = "#include <stdlib.h>\n" + t
     f.write_text(t)
     print("pvr_pds.c: DOUTD bypasses the GPU caches on Darwin")
+
+# GE8100 fix attempt: the plain (unscaled) TQ copy reads the pixel position from the USC special
+# registers x_p/y_p (97/100) instead of iterating coordinates. On the phone the TCU then fetched
+# source + (y*stride + x)*16 with y around 42 million while the image state (texaddr) was
+# right: the position registers do not give the GE8100's pixel y in this path. The scaled/clip
+# path of the same file iterates U/V from the TSP vertex data the control stream already carries
+# (PDS coefficient task + VAR0), which needs no special registers. Use it for FLOATS_0 copies too
+# (A01_PVR_TQ_POS=1 restores the position path).
+f = mesa / "src/imagination/vulkan/pvr_arch_job_transfer.c"
+t = f.read_text()
+if "A01: iterate TQ coords" not in t:
+    proto = "/** Writes the coefficient loading PDS task. */\nstatic inline VkResult\npvr_pds_coeff_task(struct pvr_transfer_ctx *ctx,"
+    if t.count(proto) != 1:
+        raise SystemExit("pvr_arch_job_transfer.c: pvr_pds_coeff_task not found")
+    t = t.replace(proto, proto.replace("static inline VkResult", "static VkResult"), 1)
+    old = "      state->shader_props.iterated = false;\n"
+    if t.count(old) != 1:
+        raise SystemExit("pvr_arch_job_transfer.c: iterated = false not found")
+    t = t.replace(old, """#if defined(__APPLE__) /* A01: iterate TQ coords (GE8100) */
+      {
+         const char *a01_pos = getenv("A01_PVR_TQ_POS");
+         state->shader_props.iterated =
+            !(a01_pos && a01_pos[0] == '1') &&
+            state->shader_props.layer_props.layer_floats ==
+               PVR_INT_COORD_SET_FLOATS_0;
+      }
+#else
+      state->shader_props.iterated = false;
+#endif
+""", 1)
+    old = """         assert(kick_usc_pds_dev_addr.addr <= UINT32_MAX);
+         state->pds_shader_task_offset = (uint32_t)kick_usc_pds_dev_addr.addr;
+      }
+"""
+    if t.count(old) != 1:
+        raise SystemExit("pvr_arch_job_transfer.c: kick_usc_pds_dev_addr block not found")
+    t = t.replace(old, old + """#if defined(__APPLE__)
+      if (state->shader_props.iterated) {
+         result = pvr_pds_coeff_task(ctx,
+                                     transfer_cmd,
+                                     state->shader_props.layer_props.sample,
+                                     prep_data);
+         if (result != VK_SUCCESS)
+            return result;
+      }
+#endif
+""", 1)
+    # forward declaration for the call above (the function is defined further down)
+    decl_anchor = "/** Writes the Uniform/Texture state data segments + the UniTex code. */"
+    if t.count(decl_anchor) != 1:
+        raise SystemExit("pvr_arch_job_transfer.c: unitex comment not found")
+    t = t.replace(decl_anchor, """static VkResult
+pvr_pds_coeff_task(struct pvr_transfer_ctx *ctx,
+                   const struct pvr_transfer_cmd *transfer_cmd,
+                   const bool sample_3d,
+                   struct pvr_transfer_prep_data *prep_data);
+
+""" + decl_anchor, 1)
+    if "#include <stdlib.h>" not in t:
+        t = "#include <stdlib.h>\n" + t
+    f.write_text(t)
+    print("pvr_arch_job_transfer.c: plain TQ copies iterate their coordinates")
