@@ -387,31 +387,33 @@ run(int linear, int uvmode, uint8_t px[4][4], char *why, size_t n)
 	return ok;
 }
 
-/* "V1 OK ..." / "V2 ERRO ..." lines into out; returns marks for the two variants ('+'/'-') */
+/* one "A01 >>> Vn ..." line per variant through emit() as soon as it is done (a hang or crash in a later
+ * variant keeps the earlier lines); step(v) before each so the watchdog names the variant */
 void
-a01_vk_tex_test(char *out, size_t n, char marks[6])
+a01_vk_tex_test(void (*emit)(const char *), void (*step)(int), char marks[6])
 {
+	char out[300];
+	size_t n = sizeof(out);
 	char why[96] = "";
 	memset(marks, '-', 6);
 	if (!init(why, sizeof(why))) {
 		snprintf(out, n, "A01 >>> VT: Vulkan nao iniciou (%s) <<<\n", why);
+		emit(out);
 		return;
 	}
-	size_t used = 0;
 	for (int v = 0; v < 6; v++) {
 		uint8_t px[4][4];
 		memset(px, 0, sizeof(px));
 		why[0] = '\0';
+		step(v);
 		int ok = run(v == 1, v >= 2 ? v - 1 : 0, px, why, sizeof(why));
 		marks[v] = ok ? '+' : '-';
-		int k = snprintf(out + used, n - used,
+		snprintf(out, n,
 		                 "A01 >>> V%d (%s): %s %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x%s%s <<<\n", v + 1,
 		                 v == 5 ? "posicao (42 42 / c1 c1)" : v == 4 ? "constante flat (80 40)" : v == 3 ? "constante (80 40)"
 		                 : v == 2 ? "coordenada (42 42 / c1 c1)" : v ? "linear CPU" : "copia GPU", ok ? "OK" : "ERRO", px[0][0], px[0][1], px[0][2], px[0][3], px[1][0],
 		                 px[1][1], px[1][2], px[1][3], px[2][0], px[2][1], px[2][2], px[2][3], px[3][0], px[3][1], px[3][2],
 		                 px[3][3], why[0] ? " falhou: " : "", why);
-		if (k > 0 && (size_t)k < n - used) {
-			used += (size_t)k;
-		}
+		emit(out);
 	}
 }
