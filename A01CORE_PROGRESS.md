@@ -239,3 +239,10 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 - Device (user, 2026-11-03, 6934a04 GPU_DIAG_2CPU): the 2-CPU package boots (first SMP boot on the A01 Core). GPU_DIAG now boots with cpus=2. Rendering fix attempt: on Darwin every img-pvr allocation is GPU-uncached (A01_PVR_GPU_CACHED=1 restores): CPU-written descriptors/uniforms/vertices were read stale through the GE8100's GPU caches (Mesa never invalidates them), matching the garbage image states (c0c0c0f140 / 240), noise textures and wrong colours.
 - Packages 9e2579e (Vulkan with GPU-uncached allocations; xnu 41622147384; Metal 41631624068; a01gl 41609024535); GPU_DIAG boots cpus=2.
 - Device (user, 2026-11-03, 9e2579e GPU_DIAG, GPU-uncached + 2 CPUs): still blue, same speed: stale GPU caches were not the cause. GPU_DIAG_3CPU (cpus=3, same drop) md5 69c1d2bbccd41329915038590781d693. References studied: Bergamota (iOS 18, Poco F1) renders through Chlorophyll (Metal AIR->NIR->ir3 over Gallium freedreno, MIT, from hackios-xnu-userland); ios-sailfish (iOS 16.7.16, Pixel 1) runs CoreAnimation's own GLES renderer through an EAGL shim on Mesa freedreno with GPU present into panel memory (no licence: ideas only).
+
+## 2026-11-03 — PowerVR compiler opt-loop cap (commit 7485c1c, Vulkan run 41642005721)
+- Phone hang address libvulkan_powervr+0x211550/0x289208 symbolised (debug dylib, same UUID) to
+  nir_shader_lower_instructions / nir_opt_constant_folding inside pco_nir_opt's loop (cap 1000 rounds, ~12 calls per shader).
+- patch-a01-opt.py caps it at 16 rounds and logs "A01: pco opt loop capped" once. Built OK; untested on the phone.
+- Zink: Mesa 26.x has only minor PowerVR-specific Zink changes (implicit_sync); Mesa 27 has no OSMesa, so a01gl stays on 25.0.7.
+- Packages rebuilt (GPU_DIAG = cpus=2, md5 1b3cc3864aa111959532521b8542228a; GPU_DIAG_3CPU also rebuilt).
