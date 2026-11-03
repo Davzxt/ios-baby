@@ -382,7 +382,7 @@ if "A01: iterate TQ coords" not in t:
       {
          const char *a01_pos = getenv("A01_PVR_TQ_POS");
          state->shader_props.iterated =
-            !(a01_pos && a01_pos[0] == '1') &&
+            (a01_pos && a01_pos[0] == '0') &&   /* default: Mesa's position path (both pass at 4 bytes) */
             state->shader_props.layer_props.layer_floats ==
                PVR_INT_COORD_SET_FLOATS_0;
       }
@@ -435,7 +435,9 @@ if "A01 copy experiments" not in t:
     t = t.replace(old, """#if defined(__APPLE__) /* A01 copy experiments */
       if (!is_fill) {
          const char *a01_bpp = getenv("A01_PVR_COPY_BPP");
-         const uint32_t a01_b = a01_bpp ? (uint32_t)strtoul(a01_bpp, NULL, 0) : 0U;
+         /* default 4: on the GE8100 the TQ copy works with R32_UINT texels and faults with
+          * R32G32B32A32_UINT (device, 2026-11-03: variants d/e passed, a/b failed) */
+         const uint32_t a01_b = a01_bpp ? (uint32_t)strtoul(a01_bpp, NULL, 0) : 4U;
          if ((a01_b == 4U || a01_b == 8U || a01_b == 16U) && remaining_size >= a01_b &&
              (src_align % a01_b) == 0U && (dst_align % a01_b) == 0U) {
             vk_format = a01_b == 16U ? VK_FORMAT_R32G32B32A32_UINT
