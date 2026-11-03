@@ -59,8 +59,32 @@ rep("""   /* Skip cases that don't need handling. */
    assert(nir_src_as_uint(intr->src[1]) == 0);
 
    nir_def *coords = nir_load_tile_coord_pco(b, 2);
+#if defined(__APPLE__)
+   /* A01: with patch-a01-screeniter.py this is X_P/Y_P, which count half pixels on the GE8100
+    * (phone: uv read back exactly 2x at (16,16) and (48,48)) */
+   {
+      const char *a01_t = getenv("A01_PVR_TILE_ITER");
+      if (!(a01_t && a01_t[0] == '1'))
+         coords = nir_fmul_imm(b, coords, 0.5f);
+   }
+#endif
    if (!a01_alu)
       coords = nir_fadd(b, coords, bary->src[0].ssa);
+
+#if defined(__APPLE__)
+   /* A01: gl_FragCoord.xy has no coefficients (pos.x/y are not iterated): it is the position itself */
+   if (a01_alu && nir_intrinsic_io_semantics(intr).location == VARYING_SLOT_POS) {
+      unsigned a01_c = nir_intrinsic_component(intr);
+      if (a01_c + intr->def.num_components <= 2) {
+         nir_def *a01_xy = nir_channels(b, coords, BITFIELD_RANGE(a01_c, intr->def.num_components));
+         nir_def_replace(&intr->def, a01_xy);
+         nir_instr_free(&intr->instr);
+         return true;
+      }
+      /* z/w: leave them to the hardware path */
+      return false;
+   }
+#endif
 
    enum glsl_interp_mode interp_mode = nir_intrinsic_interp_mode(bary);
    nir_def *rhw = NULL;
