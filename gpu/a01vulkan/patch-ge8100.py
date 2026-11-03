@@ -48,3 +48,79 @@ if pd.exists():
                       "   case PVR_BVNC_PACK(22, 49, 21, 16):\n", 1)
         pd.write_text(t)
         print("pvr_physical_device.c: GE8100 loads without the env override")
+
+# GE8100 erratum BRN 65273: the DDK gives every memory context two extra heaps, "MMU INIA BRN65273"
+# (0xF800000000) and "MMU INIB BRN65273" (0xF900000000), "two Region Header buffers 4GB apart"
+# (rgxheapconfig.h). On the phone the first GPU fault was a TA write to 0xF800000000, the INIA
+# base, with nothing mapped there: the vendor UM driver maps memory at both bases, img-pvr
+# (written for a GE8320 without this erratum) does not know these heaps. Map 4 MiB of zeroed GPU
+# memory at the base of each heap when the device's memory context is created.
+srv = mesa / "src/imagination/vulkan/winsys/pvrsrvkm/pvr_srv.c"
+t = srv.read_text()
+if "A01: BRN 65273" not in t:
+    helper = '''
+/* A01: BRN 65273 (GE8100): map zeroed memory at the base of the MMU INIA/INIB heaps, where the
+ * firmware/hardware write region headers (gpu/a01vulkan/patch-ge8100.py). */
+static void a01_map_brn65273_heap(struct pvr_srv_winsys *srv_ws, int idx, const char *name)
+{
+   const struct pvr_winsys_static_data_offsets none = { 0 };
+   const uint64_t size = 4ULL << 20;
+   struct pvr_srv_winsys_heap *heap;
+   struct pvr_srv_winsys_vma *vma;
+   struct pvr_winsys_bo *bo;
+   pvr_dev_addr_t addr;
+   VkResult result;
+
+   if (idx < 0)
+      return;
+   heap = vk_zalloc(srv_ws->base.alloc, sizeof(*heap), 8, VK_SYSTEM_ALLOCATION_SCOPE_DEVICE);
+   vma = vk_zalloc(srv_ws->base.alloc, sizeof(*vma), 8, VK_SYSTEM_ALLOCATION_SCOPE_DEVICE);
+   if (!heap || !vma)
+      return;
+   result = pvr_srv_heap_init(srv_ws, heap, idx, &none);
+   if (result == VK_SUCCESS)
+      result = pvr_srv_winsys_buffer_create(&srv_ws->base, size, srv_ws->base.page_size,
+                                            PVR_WINSYS_BO_TYPE_GPU, 0, &bo);
+   if (result == VK_SUCCESS)
+      result = pvr_srv_int_reserve_addr(srv_ws->base.render_fd, heap->server_heap,
+                                        heap->base.base_addr, size, &vma->reservation);
+   if (result == VK_SUCCESS) {
+      vma->base.dev_addr = heap->base.base_addr;
+      vma->base.heap = &heap->base;
+      vma->base.size = size;
+      vma->base.bo = NULL;
+      p_atomic_inc(&heap->base.ref_count);
+      result = pvr_srv_winsys_vma_map(&vma->base, bo, 0, size, &addr);
+   }
+   fprintf(stderr, "A01VK: BRN65273 heap %s @0x%llx: %s\\n", name,
+           (unsigned long long)heap->base.base_addr.addr,
+           result == VK_SUCCESS ? "mapped 4 MiB" : "FAILED");
+}
+
+'''
+    anchor = "static VkResult pvr_srv_memctx_init(struct pvr_srv_winsys *srv_ws)"
+    if t.count(anchor) != 1:
+        sys.exit("pvr_srv.c: memctx_init not found")
+    t = t.replace(anchor, helper + anchor, 1)
+    old = "   int usc_heap_idx = -1;\n"
+    if t.count(old) != 1:
+        sys.exit("pvr_srv.c: heap idx declarations not found")
+    t = t.replace(old, old + "   int a01_inia_idx = -1, a01_inib_idx = -1;\n", 1)
+    old = "         vis_test_heap_idx = i;\n      }\n"
+    if t.count(old) != 1:
+        sys.exit("pvr_srv.c: heap name loop not found")
+    t = t.replace(old, "         vis_test_heap_idx = i;\n"
+                  "      } else if (strcmp(heap_name, \"MMU INIA BRN65273\") == 0) {\n"
+                  "         a01_inia_idx = i;\n"
+                  "      } else if (strcmp(heap_name, \"MMU INIB BRN65273\") == 0) {\n"
+                  "         a01_inib_idx = i;\n"
+                  "      }\n", 1)
+    old = "      srv_ws->rgn_hdr_heap_present = false;\n   }\n"
+    if t.count(old) != 1:
+        sys.exit("pvr_srv.c: optional heap setup not found")
+    t = t.replace(old, old + "\n   a01_map_brn65273_heap(srv_ws, a01_inia_idx, \"INIA\");\n"
+                  "   a01_map_brn65273_heap(srv_ws, a01_inib_idx, \"INIB\");\n", 1)
+    if "#include <stdio.h>" not in t:
+        t = t.replace("#include <assert.h>\n", "#include <assert.h>\n#include <stdio.h>\n#include <string.h>\n", 1)
+    srv.write_text(t)
+    print("pvr_srv.c: BRN 65273 INIA/INIB heaps mapped")
