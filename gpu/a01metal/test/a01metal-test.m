@@ -39,7 +39,8 @@ static char g_log[1400];
 static char g_gl_sum[11] = "..........";   /* GL1-GL7, then V1 V2 V3 (a01vktex.c) */
 void a01_vk_tex_test(void (*emit)(const char *), void (*step)(int), char marks[6]);
 /* V3's first and last pixel, for the kernel status block (the V lines scroll away) */
-static char g_v3[32] = "";
+static char g_v3[40] = "";
+static char g_v3s[16], g_v6s[16], g_cs[8];
 static void vt_emit(const char *s);
 static void vt_step(int v);
 static size_t g_len;
@@ -524,11 +525,19 @@ vt_emit(const char *s)
 {
 	report("%s", s);
 	/* "A01 >>> V3 (...): ERRO p0 p1 p2 p3 <<<": keep p0 and p3 */
-	if (strncmp(s, "A01 >>> V3 ", 11) == 0) {
+	/* V3 and V6: red+green of the first and last pixel ("RRGG RRGG"), V3's copy pixel; kept short for
+	 * the kernel's TESTES line */
+	int vn = strncmp(s, "A01 >>> V3 ", 11) == 0 ? 3 : strncmp(s, "A01 >>> V6 ", 11) == 0 ? 6 : 0;
+	if (vn) {
 		const char *r = strstr(s, "): ");
 		char p[4][9], c[9] = "";
 		if (r && sscanf(r + 3, "%*s %8s %8s %8s %8s c %8s", p[0], p[1], p[2], p[3], c) >= 4) {
-			snprintf(g_v3, sizeof(g_v3), "%s %s c %s", p[0], p[3], c);
+			p[0][4] = p[3][4] = c[4] = '\0';
+			snprintf(vn == 3 ? g_v3s : g_v6s, sizeof(g_v3s), "%s %s", p[0], p[3]);
+			if (vn == 3) {
+				snprintf(g_cs, sizeof(g_cs), "%s", c);
+			}
+			snprintf(g_v3, sizeof(g_v3), "%s%s%s%s c %s", g_v3s, g_v6s[0] ? " V6 " : "", g_v6s, "", g_cs);
 		}
 	}
 }

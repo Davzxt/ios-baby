@@ -392,8 +392,8 @@ run(int linear, int uvmode, uint8_t px[4][4], char *why, size_t n)
 			/* (0.5, 0.25) -> 0x80 0x40 */
 			ok &= abs(px[i][0] - 128) <= 3 && abs(px[i][1] - 64) <= 3 && px[i][2] == 0 && px[i][3] == 255;
 		} else if (uvmode) {
-			/* uv = pixel centre / 64: (16.5/64)*255 = 66 (0x42), (48.5/64)*255 = 193 (0xc1) */
-			int ex = at[i][0] > 32 ? 193 : 66, ey = at[i][1] > 32 ? 193 : 66;
+			/* halved: pixel centre / 128: (16.5/128)*255 = 33 (0x21), (48.5/128)*255 = 97 (0x61) */
+			int ex = at[i][0] > 32 ? 97 : 33, ey = at[i][1] > 32 ? 97 : 33;
 			ok &= abs(px[i][0] - ex) <= 3 && abs(px[i][1] - ey) <= 3 && px[i][2] == 0 && px[i][3] == 255;
 		} else {
 			ok &= memcmp(px[i], texels + 4 * i, 4) == 0;
@@ -425,8 +425,8 @@ a01_vk_tex_test(void (*emit)(const char *), void (*step)(int), char marks[6])
 		marks[v] = ok ? '+' : '-';
 		snprintf(out, n,
 		                 "A01 >>> V%d (%s): %s %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x%s%s <<<\n", v + 1,
-		                 v == 5 ? "posicao (42 42 / c1 c1)" : v == 4 ? "constante flat (80 40)" : v == 3 ? "constante (80 40)"
-		                 : v == 2 ? "coordenada (42 42 / c1 c1)" : v ? "linear CPU" : "copia GPU", ok ? "OK" : "ERRO", px[0][0], px[0][1], px[0][2], px[0][3], px[1][0],
+		                 v == 5 ? "posicao (21 21 / 61 61)" : v == 4 ? "constante flat (80 40)" : v == 3 ? "constante (80 40)"
+		                 : v == 2 ? "coordenada (21 21 / 61 61)" : v ? "linear CPU" : "copia GPU", ok ? "OK" : "ERRO", px[0][0], px[0][1], px[0][2], px[0][3], px[1][0],
 		                 px[1][1], px[1][2], px[1][3], px[2][0], px[2][1], px[2][2], px[2][3], px[3][0], px[3][1], px[3][2],
 		                 px[3][3], why[0] ? " falhou: " : "", why);
 		{
