@@ -74,3 +74,22 @@ edit('src/gallium/auxiliary/target-helpers/sw_helper.h',
 edit('src/gallium/auxiliary/target-helpers/sw_helper.h',
      '#include "util/u_debug.h"\n',
      '#include "util/u_debug.h"\n#include "util/log.h"\n')
+
+# OSMesa's osmesa_target.c uses inline_sw_helper.h, which calls zink_create_screen without
+# including zink_public.h (no upstream target links Zink there). Same log + softpipe fallback.
+edit('src/gallium/auxiliary/target-helpers/inline_sw_helper.h',
+     '#ifdef GALLIUM_D3D12\n#include "d3d12/d3d12_public.h"\n#endif\n',
+     '#ifdef GALLIUM_D3D12\n#include "d3d12/d3d12_public.h"\n#endif\n\n'
+     '#ifdef GALLIUM_ZINK\n#include "zink/zink_public.h"\n#include "util/log.h"\n#endif\n')
+edit('src/gallium/auxiliary/target-helpers/inline_sw_helper.h',
+     "   if (screen == NULL && strcmp(driver, \"zink\") == 0)\n"
+     "      screen = zink_create_screen(winsys, NULL);\n",
+     "   if (screen == NULL && strcmp(driver, \"zink\") == 0) {\n"
+     "      screen = zink_create_screen(winsys, NULL);\n"
+     "      mesa_loge(\"A01: zink %s\", screen ? \"ativo (GPU)\" : \"falhou ao abrir a GPU\");\n"
+     "   }\n")
+edit('src/gallium/auxiliary/target-helpers/inline_sw_helper.h',
+     "      else if (i == 0 && drivers[i][0] != '\\0')\n"
+     "         return NULL;\n",
+     "      else if (i == 0 && drivers[i][0] != '\\0' && strcmp(drivers[i], \"zink\") != 0)\n"
+     "         return NULL;\n")
