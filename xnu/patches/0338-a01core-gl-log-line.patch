@@ -1,0 +1,122 @@
+From c7b0c0e8c77cdc9aacdf36880987f501bc48e035 Mon Sep 17 00:00:00 2001
+From: a01core <a01core@localhost>
+Date: Tue, 3 Nov 2026 00:37:12 -0300
+Subject: [PATCH] 0338 a01core: backboardd Mesa log to
+ /private/var/tmp/a01gl.log, last line on screen (A01 >>> GL:)
+
+---
+ bsd/dev/a01core_drop.c | 48 ++++++++++++++++++++++++++++++++++++++++++
+ bsd/dev/herolte_gl.c   |  1 +
+ bsd/kern/kern_exec.c   |  4 ++--
+ 3 files changed, 51 insertions(+), 2 deletions(-)
+
+diff --git a/bsd/dev/a01core_drop.c b/bsd/dev/a01core_drop.c
+index b041398..3176b97 100644
+--- a/bsd/dev/a01core_drop.c
++++ b/bsd/dev/a01core_drop.c
+@@ -22,6 +22,7 @@
+ #include <sys/kernel.h>
+ #include <string.h>
+ #include <sys/vnode_internal.h>
++#include <sys/vnode.h>
+ #include <sys/namei.h>
+ #include <sys/kauth.h>
+ #include <sys/mount.h>
+@@ -336,6 +337,52 @@ adrop_fill_letter(void)
+ 	return (p[0] == '0' && p[1] == ' ') ? 'P' : 'p';
+ }
+ 
++
++/* 0338: last line of backboardd's Mesa log (MESA_LOG_FILE), e.g. why Zink could not open the GPU */
++static char adrop_gl_seen[120];
++
++static void
++adrop_show_gl(vfs_context_t ctx)
++{
++	static char buf[2048];
++	vnode_t vp = NULLVP;
++	int resid = 0;
++	if (vnode_open("/private/var/tmp/a01gl.log", FREAD, 0, 0, &vp, ctx) != 0) {
++		return;
++	}
++	off_t size = 0;
++	struct vnode_attr va;
++	VATTR_INIT(&va);
++	VATTR_WANTED(&va, va_data_size);
++	if (vnode_getattr(vp, &va, ctx) == 0) {
++		size = (off_t)va.va_data_size;
++	}
++	off_t at = size > (off_t)sizeof(buf) - 1 ? size - ((off_t)sizeof(buf) - 1) : 0;
++	int ok = vn_rdwr(UIO_READ, vp, (caddr_t)buf, (int)sizeof(buf) - 1, at, UIO_SYSSPACE, 0,
++	    vfs_context_ucred(ctx), &resid, vfs_context_proc(ctx)) == 0;
++	vnode_close(vp, FREAD, ctx);
++	if (!ok) {
++		return;
++	}
++	int n = (int)sizeof(buf) - 1 - resid;
++	buf[n] = '\0';
++	while (n > 0 && (buf[n - 1] == '\n' || buf[n - 1] == '\r')) {
++		buf[--n] = '\0';
++	}
++	char *last = buf;
++	for (int i = 0; i < n; i++) {
++		if (buf[i] == '\n') {
++			last = &buf[i + 1];
++		}
++	}
++	char line[sizeof(adrop_gl_seen)];
++	strlcpy(line, n > 0 ? last : "(vazio)", sizeof(line));
++	if (strcmp(line, adrop_gl_seen) != 0) {
++		strlcpy(adrop_gl_seen, line, sizeof(adrop_gl_seen));
++	}
++	printf("A01 >>> GL: %s <<<\n", adrop_gl_seen);
++}
++
+ static void
+ adrop_watch_thread(__unused void *arg, __unused wait_result_t wr)
+ {
+@@ -392,6 +439,7 @@ adrop_watch_thread(__unused void *arg, __unused wait_result_t wr)
+ 			}
+ 			/* per test: P/p fill, C/c copy (TESTE 1), R/r render pass (2), T/t triangle (3) */
+ 			adrop_read_all("/private/var/herolte/autorun.out", ctx);
++			adrop_show_gl(ctx);
+ 			printf("A01 >>> CODIGO: %s-%c-%c%c%c%c <<<\n", code, result, adrop_fill_letter(),
+ 			    adrop_test_letter("TESTE 1 (copia de memoria): ", 'C'),
+ 			    adrop_test_letter("TESTE 2 (textura + render pass): ", 'R'),
+diff --git a/bsd/dev/herolte_gl.c b/bsd/dev/herolte_gl.c
+index e33b474..ad72237 100644
+--- a/bsd/dev/herolte_gl.c
++++ b/bsd/dev/herolte_gl.c
+@@ -159,6 +159,7 @@ herolte_gl_env(const char *path, int pid, const char **extra, int max)
+ 		char drv[16] = "";
+ 		PE_parse_boot_argn("a01gl", drv, sizeof(drv));
+ 		extra[n++] = (strcmp(drv, "zink") == 0) ? "GALLIUM_DRIVER=zink" : "GALLIUM_DRIVER=softpipe";
++		extra[n++] = "MESA_LOG_FILE=/private/var/tmp/a01gl.log";   /* 0338: why zink fails, on screen */
+ 	}
+ #endif
+ 	if (hgl_mode >= 2) {
+diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
+index cc416e9..60751cf 100644
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -5760,7 +5760,7 @@ exec_extract_strings(struct image_params *imgp)
+ #else
+ #define HEROLTE_XPC_LOG 0   /* A01: no extra console line per xpcproxy */
+ #endif
+-		const char *extra[4];
++		const char *extra[6];
+ 		const char *herolte_path = imgp->ip_strings + strlen(EXECUTABLE_KEY);
+ 		size_t herolte_len = strlen(herolte_path);
+ 		/* Which launchd job a xpcproxy is for: its second argument, to match with its EXIT line. */
+@@ -5770,7 +5770,7 @@ exec_extract_strings(struct image_params *imgp)
+ 		}
+ 		/* posix_spawn runs this on the parent's thread: the new process is the context's. */
+ 		int n = herolte_gl_env(imgp->ip_strings + strlen(EXECUTABLE_KEY),
+-		    proc_getpid(vfs_context_proc(imgp->ip_vfs_context)), extra, 4);
++		    proc_getpid(vfs_context_proc(imgp->ip_vfs_context)), extra, 6);
+ 		if (n < 0) {
+ 			error = EPERM;          /* boot-arg heronoexec names this program */
+ 			goto bad;
+-- 
+2.55.0.windows.5
+
