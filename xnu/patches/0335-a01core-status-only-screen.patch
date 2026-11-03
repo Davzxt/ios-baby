@@ -1,0 +1,68 @@
+From 89fd1e691242b6ad031f207483dd63254f0ceaca Mon Sep 17 00:00:00 2001
+From: a01core <a01core@localhost>
+Date: Mon, 2 Nov 2026 23:35:41 -0300
+Subject: [PATCH] 0335 a01core: screen shows only A01 >>> status lines (step,
+ faults, code) and panics; no old report, no 15 s hold
+
+---
+ bsd/dev/a01core_drop.c         | 20 ++++++++++++++++----
+ osfmk/console/serial_console.c |  2 +-
+ 2 files changed, 17 insertions(+), 5 deletions(-)
+
+diff --git a/bsd/dev/a01core_drop.c b/bsd/dev/a01core_drop.c
+index 7b456b0..b041398 100644
+--- a/bsd/dev/a01core_drop.c
++++ b/bsd/dev/a01core_drop.c
+@@ -347,7 +347,22 @@ adrop_watch_thread(__unused void *arg, __unused wait_result_t wr)
+ 		if (adrop_first_line("/private/var/herolte/autorun.out", line, sizeof(line), ctx) &&
+ 		    strcmp(line, adrop_watch_seen) != 0) {
+ 			strlcpy(adrop_watch_seen, line, sizeof(adrop_watch_seen));
+-			printf("%s (agora, %u s)\n", line, (i + 1) * 5);
++			{
++				/* the step name between the first quotes of the verdict line */
++				char step[48];
++				strlcpy(step, strlen(line) > 14 ? line + 14 : line, sizeof(step));   /* text after "A01METAL: >>> " */
++				const char *q = strnstr(line, "\"", sizeof(line));
++				if (q != NULL) {
++					const char *e = strnstr(q + 1, "\"", sizeof(line) - (size_t)(q + 1 - line));
++					size_t n = e != NULL ? (size_t)(e - q - 1) : strlen(q + 1);
++					if (n >= sizeof(step)) {
++						n = sizeof(step) - 1;
++					}
++					memcpy(step, q + 1, n);
++					step[n] = '\0';
++				}
++				printf("A01 >>> ETAPA: %s (%u s) <<<\n", step, (i + 1) * 5);
++			}
+ 			if (strnstr(line, "FUNCIONOU", sizeof(line)) != NULL) {
+ 				result = '1';
+ 			} else if (strnstr(line, "RESULTADO", sizeof(line)) != NULL) {
+@@ -414,12 +429,9 @@ a01core_drop_apply(void)
+ 	if (on && rootvnode != NULLVP) {
+ 		vfs_context_t ctx = vfs_context_kernel();
+ 		int shown = adrop_show("/private/var/a01/drop.txt", ctx);
+-		shown += adrop_show("/private/var/herolte/autorun.out", ctx);
+ 		/* last boot's verdict: the watcher prints only lines that differ from it */
+ 		(void)adrop_first_line("/private/var/herolte/autorun.out", adrop_watch_seen, sizeof(adrop_watch_seen), ctx);
+ 		if (shown) {
+-			printf("A01CORE REPORT: holding 15 s\n");
+-			IOSleep(15000);
+ 		}
+ 	}
+ 	if (on && kernel_thread_start(adrop_watch_thread, NULL, &thread) == KERN_SUCCESS) {
+diff --git a/osfmk/console/serial_console.c b/osfmk/console/serial_console.c
+index 55bc30d..456be46 100644
+--- a/osfmk/console/serial_console.c
++++ b/osfmk/console/serial_console.c
+@@ -297,7 +297,7 @@ static bool
+ a01_keep_line(const char *s, int n)
+ {
+ 	static const char *const keys[] = {
+-		"A01", "PVR", "anic", "RESULTADO", "TESTE", "ERRO", "FALHOU", "FUNCIONOU", "XNU", "Debugger",
++		"A01 >>>", "anic", "Debugger",   /* 0335: only the typeable status lines and panics */
+ 	};
+ 	for (unsigned i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
+ 		if (strnstr(s, keys[i], (size_t)n) != NULL) {
+-- 
+2.55.0.windows.5
+
