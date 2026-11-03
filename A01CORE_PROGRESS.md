@@ -252,3 +252,10 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 - Metal tests 1-3 never sampled a texture in a shader. New direct Vulkan test (test/a01vktex.c): V1 OPTIMAL + GPU copy upload,
   V2 LINEAR written by the CPU; marks 8-9 of the kernel "TESTES GL1-7" line. Metal run 41675407359, commit 830ff73.
 - Packages: GPU_DIAG_3CPU (with V1/V2), new 3CPU_SEM_GPU (cpus=3, CPU-drawn UI, clean screen). Untested.
+
+## 2026-11-03 — varyings: root cause of the blue UI
+- Descriptor dump (VD1/VD2): image state words correct (2x2, RGBA8, address 65c00c6000, clamp sampler).
+- a01vktex: V1/V2 read texel (0,0) everywhere; V3 (uv as colour) 0; V4 constant smooth and V5 flat OK.
+  So a varying that differs between vertices iterates to 0: perspective-correct iteration is broken on the GE8100.
+- Fixes: GE8100 isp_max_tiles_in_flight 2 (its IPP pipes); patch-a01-nopersp.py iterates smooth varyings linearly
+  on Darwin (UI is 2D, w = 1; A01_PVR_PERSP=1 restores). Vulkan run 41698871722. Untested on the phone.
