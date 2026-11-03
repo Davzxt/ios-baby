@@ -246,3 +246,9 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 - patch-a01-opt.py caps it at 16 rounds and logs "A01: pco opt loop capped" once. Built OK; untested on the phone.
 - Zink: Mesa 26.x has only minor PowerVR-specific Zink changes (implicit_sync); Mesa 27 has no OSMesa, so a01gl stays on 25.0.7.
 - Packages rebuilt (GPU_DIAG = cpus=2, md5 1b3cc3864aa111959532521b8542228a; GPU_DIAG_3CPU also rebuilt).
+
+## 2026-11-03 — GL results and texture isolation
+- Phone (opt-loop fix): GL1 GL2 GL4 right, GL3 GL5 GL6 GL7 wrong: every textured draw fails (TCU c0c0c0f140, VDM 65c0eaf000).
+- Metal tests 1-3 never sampled a texture in a shader. New direct Vulkan test (test/a01vktex.c): V1 OPTIMAL + GPU copy upload,
+  V2 LINEAR written by the CPU; marks 8-9 of the kernel "TESTES GL1-7" line. Metal run 41675407359, commit 830ff73.
+- Packages: GPU_DIAG_3CPU (with V1/V2), new 3CPU_SEM_GPU (cpus=3, CPU-drawn UI, clean screen). Untested.
