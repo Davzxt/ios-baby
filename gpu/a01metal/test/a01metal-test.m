@@ -585,6 +585,52 @@ int main(int argc, char **argv)
 		STEP("TESTE 1 (copia de memoria)");
 		alarm(A01_HANG_SECONDS);
 		{
+			/*
+			 * Copy experiments, all in this boot (the GE8100's transfer copy faults): each variant sets
+			 * the Mesa knobs (A01_PVR_COPY_BPP texel size, A01_PVR_TQ_POS 1 = position registers /
+			 * 0 = iterated coordinates, A01_PVR_COPY_W rows of W texels) and copies 4 KiB.
+			 * One console line: A01 >>> COPIA: aS bn ... (S worked, n failed).
+			 */
+			static const struct { const char *bpp, *pos, *w; } var[] = {
+				{ "16", "1", "" }, { "16", "0", "" }, { "8", "1", "" }, { "4", "1", "" },
+				{ "4", "0", "" }, { "16", "1", "16" }, { "4", "1", "64" },
+			};
+			char res[64] = "";
+			int any = 0;
+			for (unsigned v = 0; v < sizeof(var) / sizeof(var[0]); v++) {
+				setenv("A01_PVR_COPY_BPP", var[v].bpp, 1);
+				setenv("A01_PVR_TQ_POS", var[v].pos, 1);
+				if (var[v].w[0]) {
+					setenv("A01_PVR_COPY_W", var[v].w, 1);
+				} else {
+					unsetenv("A01_PVR_COPY_W");
+				}
+				id<MTLBuffer> va = [dev newBufferWithLength:4096 options:MTLResourceStorageModeShared];
+				id<MTLBuffer> vb = [dev newBufferWithLength:4096 options:MTLResourceStorageModeShared];
+				memset(vb.contents, 0, 4096);
+				id<MTLCommandBuffer> vcb = [q commandBuffer];
+				id<MTLBlitCommandEncoder> vbl = [vcb blitCommandEncoder];
+				[vbl fillBuffer:va range:NSMakeRange(0, 4096) value:(uint8_t)(0x30 + v)];
+				[vbl copyFromBuffer:va sourceOffset:0 toBuffer:vb destinationOffset:0 size:4096];
+				[vbl endEncoding];
+				[vcb commit];
+				[vcb waitUntilCompleted];
+				usleep(500 * 1000);
+				const volatile uint8_t *vp = vb.contents;
+				unsigned vbad = 0;
+				for (unsigned i = 0; i < 4096; i++) vbad += vp[i] != (uint8_t)(0x30 + v);
+				any |= vbad == 0;
+				size_t l = strlen(res);
+				snprintf(res + l, sizeof(res) - l, "%s%c%c", l ? " " : "", 'a' + v, vbad == 0 ? 'S' : 'n');
+				report("  copia %c (bpp %s, %s, largura %s): %u bytes errados\n", 'a' + v, var[v].bpp,
+				       var[v].pos[0] == '1' ? "posicao" : "iterada", var[v].w[0] ? var[v].w : "linha", vbad);
+			}
+			unsetenv("A01_PVR_COPY_BPP");
+			unsetenv("A01_PVR_TQ_POS");
+			unsetenv("A01_PVR_COPY_W");
+			report("A01 >>> COPIA: %s <<<\n", res);
+			(void)any;
+
 			id<MTLBuffer> a = [dev newBufferWithLength:4096 options:MTLResourceStorageModeShared];
 			id<MTLBuffer> b = [dev newBufferWithLength:4096 options:MTLResourceStorageModeShared];
 			memset(b.contents, 0, 4096);

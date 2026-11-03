@@ -422,3 +422,48 @@ pvr_pds_coeff_task(struct pvr_transfer_ctx *ctx,
         t = "#include <stdlib.h>\n" + t
     f.write_text(t)
     print("pvr_arch_job_transfer.c: plain TQ copies iterate their coordinates")
+
+# A01 copy experiments (one boot tries several ways; the GPU test sets these between copies):
+#   A01_PVR_COPY_BPP = 16 | 8 | 4   texel size used for vkCmdCopyBuffer (when aligned)
+#   A01_PVR_COPY_W   = N            rows of N texels (N x texels/N) instead of one long row
+f = mesa / "src/imagination/vulkan/rogue/pvr_blit.c"
+t = f.read_text()
+if "A01 copy experiments" not in t:
+    old = "      texels = remaining_size / texel_width;\n"
+    if t.count(old) != 1:
+        raise SystemExit("pvr_blit.c: texel count not found")
+    t = t.replace(old, """#if defined(__APPLE__) /* A01 copy experiments */
+      if (!is_fill) {
+         const char *a01_bpp = getenv("A01_PVR_COPY_BPP");
+         const uint32_t a01_b = a01_bpp ? (uint32_t)strtoul(a01_bpp, NULL, 0) : 0U;
+         if ((a01_b == 4U || a01_b == 8U || a01_b == 16U) && remaining_size >= a01_b &&
+             (src_align % a01_b) == 0U && (dst_align % a01_b) == 0U) {
+            vk_format = a01_b == 16U ? VK_FORMAT_R32G32B32A32_UINT
+                      : a01_b == 8U  ? VK_FORMAT_R32G32_UINT
+                                     : VK_FORMAT_R32_UINT;
+            texel_width = a01_b;
+            byte_rows = false;
+         }
+      }
+#endif
+""" + old, 1)
+    old = "      transfer_cmd = pvr_transfer_cmd_alloc(cmd_buffer);\n      if (!transfer_cmd)\n         return VK_ERROR_OUT_OF_HOST_MEMORY;\n\n      if (!is_fill) {\n         pvr_setup_buffer_surface(\n"
+    if t.count(old) != 1:
+        raise SystemExit("pvr_blit.c: copy region transfer_cmd alloc not found")
+    t = t.replace(old, """#if defined(__APPLE__)
+      if (!is_fill && !byte_rows) {
+         const char *a01_w = getenv("A01_PVR_COPY_W");
+         const uint32_t a01_n = a01_w ? (uint32_t)strtoul(a01_w, NULL, 0) : 0U;
+         if (a01_n > 0U && texels >= a01_n && (texels % a01_n) == 0U &&
+             texels / a01_n <= PVR_MAX_TRANSFER_SIZE_IN_TEXELS &&
+             a01_n <= PVR_MAX_TRANSFER_SIZE_IN_TEXELS) {
+            width = a01_n;
+            height = (uint32_t)(texels / a01_n);
+         }
+      }
+#endif
+""" + old, 1)
+    if "#include <stdlib.h>" not in t:
+        t = t.replace("#include <assert.h>\n", "#include <assert.h>\n#include <stdlib.h>\n", 1)
+    f.write_text(t)
+    print("pvr_blit.c: copy experiments (A01_PVR_COPY_BPP / A01_PVR_COPY_W)")
