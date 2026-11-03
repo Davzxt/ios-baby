@@ -472,6 +472,134 @@ zink_log_thread(void *arg)
 	return NULL;
 }
 
+/*
+ * OpenGL through Zink on the GE8100, the same path as the iOS UI (backboardd's EAGL shim): known
+ * colours drawn and read back, one console line per step, so wrong colours or failed texture
+ * sampling show without photos. The UI faulted with TCU reads of garbage texture addresses.
+ *   GL1 clears (white, red), GL2 a flat green quad, GL3 a 2x2 texture (red, green, blue, white)
+ *   on a quad, GL4 a 720x1480 clear (screen size).
+ */
+typedef void *(*a01_osm_create_fn)(unsigned format, int depth, int stencil, int accum, void *share);
+typedef unsigned char (*a01_osm_make_fn)(void *ctx, void *buf, unsigned type, int w, int h);
+typedef void *(*a01_osm_proc_fn)(const char *name);
+#define A01_GL_RGBA 0x1908u
+#define A01_GL_UNSIGNED_BYTE 0x1401u
+#define A01_GL_COLOR_BUFFER_BIT 0x4000u
+#define A01_GL_QUADS 0x0007u
+#define A01_GL_TEXTURE_2D 0x0DE1u
+#define A01_GL_NEAREST 0x2600u
+#define A01_GL_TEXTURE_MIN_FILTER 0x2801u
+#define A01_GL_TEXTURE_MAG_FILTER 0x2800u
+
+static void
+gl_px(char *out, size_t n, const uint8_t *p)
+{
+	snprintf(out, n, "%02x%02x%02x%02x", p[0], p[1], p[2], p[3]);
+}
+
+static void
+gl_zink_test(void)
+{
+	void *h = dlopen("/private/var/a01/lib/libOSMesa.8.dylib", RTLD_NOW | RTLD_LOCAL);
+	if (!h) {
+		report("A01 >>> GLT: sem libOSMesa (%s) <<<\n", dlerror());
+		return;
+	}
+	a01_osm_create_fn create = (a01_osm_create_fn)dlsym(h, "OSMesaCreateContextExt");
+	a01_osm_make_fn make = (a01_osm_make_fn)dlsym(h, "OSMesaMakeCurrent");
+	a01_osm_proc_fn proc = (a01_osm_proc_fn)dlsym(h, "OSMesaGetProcAddress");
+	if (!create || !make || !proc) {
+		report("A01 >>> GLT: OSMesa sem simbolos <<<\n");
+		return;
+	}
+	setenv("GALLIUM_DRIVER", "zink", 1);
+	void *ctx = create(A01_GL_RGBA, 0, 0, 0, NULL);
+	if (!ctx) {
+		report("A01 >>> GLT: zink nao criou contexto <<<\n");
+		return;
+	}
+	static uint8_t small[64 * 64 * 4];
+	if (!make(ctx, small, A01_GL_UNSIGNED_BYTE, 64, 64)) {
+		report("A01 >>> GLT: MakeCurrent falhou <<<\n");
+		return;
+	}
+	void (*ClearColor)(float, float, float, float) = (__typeof__(ClearColor))proc("glClearColor");
+	void (*Clear)(unsigned) = (__typeof__(Clear))proc("glClear");
+	void (*Finish)(void) = (__typeof__(Finish))proc("glFinish");
+	void (*ReadPixels)(int, int, int, int, unsigned, unsigned, void *) = (__typeof__(ReadPixels))proc("glReadPixels");
+	void (*Begin)(unsigned) = (__typeof__(Begin))proc("glBegin");
+	void (*End)(void) = (__typeof__(End))proc("glEnd");
+	void (*Vertex2f)(float, float) = (__typeof__(Vertex2f))proc("glVertex2f");
+	void (*TexCoord2f)(float, float) = (__typeof__(TexCoord2f))proc("glTexCoord2f");
+	void (*Color4f)(float, float, float, float) = (__typeof__(Color4f))proc("glColor4f");
+	void (*Enable)(unsigned) = (__typeof__(Enable))proc("glEnable");
+	void (*Disable)(unsigned) = (__typeof__(Disable))proc("glDisable");
+	void (*GenTextures)(int, unsigned *) = (__typeof__(GenTextures))proc("glGenTextures");
+	void (*BindTexture)(unsigned, unsigned) = (__typeof__(BindTexture))proc("glBindTexture");
+	void (*TexParameteri)(unsigned, unsigned, int) = (__typeof__(TexParameteri))proc("glTexParameteri");
+	void (*TexImage2D)(unsigned, int, int, int, int, int, unsigned, unsigned, const void *) = (__typeof__(TexImage2D))proc("glTexImage2D");
+	const char *(*GetString)(unsigned) = (__typeof__(GetString))proc("glGetString");
+	if (!ClearColor || !Clear || !Finish || !ReadPixels || !Begin || !Vertex2f || !TexImage2D) {
+		report("A01 >>> GLT: funcoes GL ausentes <<<\n");
+		return;
+	}
+	const char *rend = GetString ? GetString(0x1F01) : NULL;   /* GL_RENDERER */
+	report("A01 >>> GLT: renderer %.60s <<<\n", rend ? rend : "?");
+
+	uint8_t px[4][4];
+	char a[12], b[12], c[12], d[12];
+
+	ClearColor(1, 1, 1, 1); Clear(A01_GL_COLOR_BUFFER_BIT); Finish();
+	ReadPixels(32, 32, 1, 1, A01_GL_RGBA, A01_GL_UNSIGNED_BYTE, px[0]);
+	ClearColor(1, 0, 0, 1); Clear(A01_GL_COLOR_BUFFER_BIT); Finish();
+	ReadPixels(32, 32, 1, 1, A01_GL_RGBA, A01_GL_UNSIGNED_BYTE, px[1]);
+	gl_px(a, sizeof(a), px[0]); gl_px(b, sizeof(b), px[1]);
+	report("A01 >>> GL1: branco %s (ffffffff) vermelho %s (ff0000ff) <<<\n", a, b);
+
+	ClearColor(0, 0, 0, 1); Clear(A01_GL_COLOR_BUFFER_BIT);
+	Color4f(0, 1, 0, 1);
+	Begin(A01_GL_QUADS); Vertex2f(-1, -1); Vertex2f(1, -1); Vertex2f(1, 1); Vertex2f(-1, 1); End();
+	Finish();
+	ReadPixels(32, 32, 1, 1, A01_GL_RGBA, A01_GL_UNSIGNED_BYTE, px[0]);
+	gl_px(a, sizeof(a), px[0]);
+	report("A01 >>> GL2: quad verde %s (00ff00ff) <<<\n", a);
+
+	static const uint8_t tex[16] = { 255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255 };
+	unsigned t = 0;
+	GenTextures(1, &t);
+	BindTexture(A01_GL_TEXTURE_2D, t);
+	TexParameteri(A01_GL_TEXTURE_2D, A01_GL_TEXTURE_MIN_FILTER, (int)A01_GL_NEAREST);
+	TexParameteri(A01_GL_TEXTURE_2D, A01_GL_TEXTURE_MAG_FILTER, (int)A01_GL_NEAREST);
+	TexImage2D(A01_GL_TEXTURE_2D, 0, (int)A01_GL_RGBA, 2, 2, 0, A01_GL_RGBA, A01_GL_UNSIGNED_BYTE, tex);
+	Enable(A01_GL_TEXTURE_2D);
+	Color4f(1, 1, 1, 1);
+	ClearColor(0, 0, 0, 1); Clear(A01_GL_COLOR_BUFFER_BIT);
+	Begin(A01_GL_QUADS);
+	TexCoord2f(0, 0); Vertex2f(-1, -1); TexCoord2f(1, 0); Vertex2f(1, -1);
+	TexCoord2f(1, 1); Vertex2f(1, 1); TexCoord2f(0, 1); Vertex2f(-1, 1);
+	End();
+	Finish();
+	Disable(A01_GL_TEXTURE_2D);
+	/* texel rows: bottom (red, green), top (blue, white) */
+	ReadPixels(16, 16, 1, 1, A01_GL_RGBA, A01_GL_UNSIGNED_BYTE, px[0]);
+	ReadPixels(48, 16, 1, 1, A01_GL_RGBA, A01_GL_UNSIGNED_BYTE, px[1]);
+	ReadPixels(16, 48, 1, 1, A01_GL_RGBA, A01_GL_UNSIGNED_BYTE, px[2]);
+	ReadPixels(48, 48, 1, 1, A01_GL_RGBA, A01_GL_UNSIGNED_BYTE, px[3]);
+	gl_px(a, sizeof(a), px[0]); gl_px(b, sizeof(b), px[1]); gl_px(c, sizeof(c), px[2]); gl_px(d, sizeof(d), px[3]);
+	report("A01 >>> GL3: textura %s %s %s %s (ff0000ff 00ff00ff 0000ffff ffffffff) <<<\n", a, b, c, d);
+
+	static uint8_t big[720 * 1480 * 4];
+	if (make(ctx, big, A01_GL_UNSIGNED_BYTE, 720, 1480)) {
+		ClearColor(0, 0, 1, 1); Clear(A01_GL_COLOR_BUFFER_BIT); Finish();
+		ReadPixels(0, 0, 1, 1, A01_GL_RGBA, A01_GL_UNSIGNED_BYTE, px[0]);
+		ReadPixels(719, 1479, 1, 1, A01_GL_RGBA, A01_GL_UNSIGNED_BYTE, px[1]);
+		gl_px(a, sizeof(a), px[0]); gl_px(b, sizeof(b), px[1]);
+		report("A01 >>> GL4: tela 720x1480 azul %s %s (0000ffff) <<<\n", a, b);
+	} else {
+		report("A01 >>> GL4: MakeCurrent 720x1480 falhou <<<\n");
+	}
+}
+
 static void
 install_diagnostics(void)
 {
@@ -805,6 +933,9 @@ int main(int argc, char **argv)
 		} else {
 			report("A01METAL: >>> RESULTADO: FALHOU (%d de 3 testes com ERRO, veja as linhas TESTE acima) <<<\n", failures);
 		}
+		alarm(A01_HANG_SECONDS);
+		gl_zink_test();
+		alarm(0);
 		/* keep showing Zink's log lines (backboardd may start the UI after the tests) */
 		for (unsigned i = 0; i < 300; i++) {
 			zink_log_poll();
