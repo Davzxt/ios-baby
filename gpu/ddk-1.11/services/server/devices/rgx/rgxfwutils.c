@@ -4236,6 +4236,11 @@ PVRSRV_ERROR RGXScheduleCommand(PVRSRV_RGXDEV_INFO	*psDevInfo,
 	 * our write offset means it took the command. */
 	if (psKCCBCmd->eCmdType == RGXFWIF_KCCB_CMD_KICK)
 	{
+		extern IMG_UINT32 g_a01_dm_kicks[8];
+		if ((IMG_UINT32)eKCCBType < 8 && eError == PVRSRV_OK)
+		{
+			g_a01_dm_kicks[(IMG_UINT32)eKCCBType]++;
+		}
 		static IMG_UINT32 ui32A01Kicks;
 		if (ui32A01Kicks++ < 48)
 		{

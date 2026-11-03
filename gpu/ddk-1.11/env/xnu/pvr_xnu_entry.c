@@ -125,10 +125,48 @@ a01pvr_print_fw_align(PVRSRV_DEVICE_NODE *psDevNode)
 	}
 }
 
+/* A01: which processes opened the GPU (backboardd = the iOS UI through Zink) and how many
+ * kicks went to each data master, for the on-screen line "A01 >>> GPU: ...". */
+IMG_UINT32 g_a01_dm_kicks[8];
+static char g_a01_users[96];
+
+static void
+a01pvr_note_user(void)
+{
+	char name[24] = "";
+	proc_selfname(name, (int)sizeof(name));
+	if (name[0] == '\0') {
+		return;
+	}
+	size_t len = strnlen(g_a01_users, sizeof(g_a01_users));
+	size_t nlen = strnlen(name, sizeof(name));
+	for (size_t i = 0; i + nlen <= len; i++) {
+		if (strncmp(g_a01_users + i, name, nlen) == 0 && (i + nlen == len || g_a01_users[i + nlen] == ',')) {
+			return;
+		}
+	}
+	if (len + nlen + 2 < sizeof(g_a01_users)) {
+		if (len > 0) {
+			g_a01_users[len++] = ',';
+		}
+		strlcpy(g_a01_users + len, name, sizeof(g_a01_users) - len);
+	}
+}
+
+void a01pvr_gpu_users(char *buf, unsigned size);
+void
+a01pvr_gpu_users(char *buf, unsigned size)
+{
+	extern int snprintf(char *, size_t, const char *, ...);
+	snprintf(buf, size, "%s TA%u 3D%u CDM%u", g_a01_users[0] ? g_a01_users : "ninguem",
+	    g_a01_dm_kicks[2], g_a01_dm_kicks[3], g_a01_dm_kicks[4]);
+}
+
 /* first open initialises the device (firmware load and boot), as PVRSRVCommonDeviceOpen does */
 int
 a01pvr_open(void **ppvConnection)
 {
+	a01pvr_note_user();
 	if (!gpsA01DevNode) {
 		return PVRSRV_ERROR_INIT_FAILURE;
 	}

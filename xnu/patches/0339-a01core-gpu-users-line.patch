@@ -1,0 +1,39 @@
+From 75390d57dc3518666dff4137481252959cb62920 Mon Sep 17 00:00:00 2001
+From: a01core <a01core@localhost>
+Date: Tue, 3 Nov 2026 01:12:12 -0300
+Subject: [PATCH] 0339 a01core: A01 >>> GPU line (processes that opened the
+ GPU, kicks per data master)
+
+---
+ bsd/dev/a01core_drop.c | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/bsd/dev/a01core_drop.c b/bsd/dev/a01core_drop.c
+index 3176b97..6d8967b 100644
+--- a/bsd/dev/a01core_drop.c
++++ b/bsd/dev/a01core_drop.c
+@@ -266,7 +266,8 @@ adrop_show(const char *path, vfs_context_t ctx)
+  * package keeps the console.
+  */
+ extern void a01pvr_gpu_code(char *buf);
+-extern void a01pvr_gpu_fault(char *buf, unsigned size, int last);   /* gpu/ddk-1.11/env/xnu/pvr_xnu_entry.c */
++extern void a01pvr_gpu_fault(char *buf, unsigned size, int last);
++extern void a01pvr_gpu_users(char *buf, unsigned size);   /* gpu/ddk-1.11/env/xnu/pvr_xnu_entry.c */
+ static char adrop_watch_seen[160];
+ static int adrop_watch_chan;
+ 
+@@ -440,6 +441,11 @@ adrop_watch_thread(__unused void *arg, __unused wait_result_t wr)
+ 			/* per test: P/p fill, C/c copy (TESTE 1), R/r render pass (2), T/t triangle (3) */
+ 			adrop_read_all("/private/var/herolte/autorun.out", ctx);
+ 			adrop_show_gl(ctx);
++			{
++				char users[140];
++				a01pvr_gpu_users(users, sizeof(users));
++				printf("A01 >>> GPU: %s <<<\n", users);
++			}
+ 			printf("A01 >>> CODIGO: %s-%c-%c%c%c%c <<<\n", code, result, adrop_fill_letter(),
+ 			    adrop_test_letter("TESTE 1 (copia de memoria): ", 'C'),
+ 			    adrop_test_letter("TESTE 2 (textura + render pass): ", 'R'),
+-- 
+2.55.0.windows.5
+

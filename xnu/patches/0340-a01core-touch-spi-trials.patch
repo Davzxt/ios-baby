@@ -1,0 +1,62 @@
+From 99a4ae92afadf6f5218dffc9e4308738dfbea7fc Mon Sep 17 00:00:00 2001
+From: a01core <a01core@localhost>
+Date: Tue, 3 Nov 2026 01:13:34 -0300
+Subject: [PATCH] 0340 a01core touch: NT36525 id read tries 5/1/0.3 MHz in SPI
+ mode 0 and 5/1 MHz in mode 3, each attempt on screen
+
+---
+ bsd/dev/a01core_touch.c | 17 ++++++++++++++---
+ 1 file changed, 14 insertions(+), 3 deletions(-)
+
+diff --git a/bsd/dev/a01core_touch.c b/bsd/dev/a01core_touch.c
+index eede68e..d417cb5 100644
+--- a/bsd/dev/a01core_touch.c
++++ b/bsd/dev/a01core_touch.c
+@@ -153,6 +153,7 @@ static vm_offset_t g_gpio, g_infra, g_spi;
+ static int t_verbose, t_flipx, t_flipy, t_swap;
+ static uint32_t t_hz = 5000000u;
+ static int t_paused;
++static int t_mode3;
+ static int t_sleep_evt;
+ 
+ static uint8_t *msg;                 /* payload of the last message read */
+@@ -246,6 +247,9 @@ spi_begin(void)
+ 	    CMD_TX_ENDIAN | CMD_RX_ENDIAN | CMD_CS_POL | CMD_SAMPLE_SEL | CMD_DEASSERT |
+ 	    CMD_FINISH_IE | CMD_PAUSE_IE);
+ 	cmd |= CMD_TXMSBF | CMD_RXMSBF | CMD_PAUSE_EN;      /* SPI mode 0, MSB first */
++	if (t_mode3) {
++		cmd |= CMD_CPHA | CMD_CPOL;                    /* 0340: SPI mode 3 trial */
++	}
+ 	wr(g_spi, SPI_CMD, cmd);
+ 	t_paused = 0;
+ }
+@@ -746,16 +750,23 @@ static int
+ nvt_chip_id(void)
+ {
+ 	uint8_t id[6] = { 0 };
++	/* 0340: the chip answered all-ones at 5 MHz mode 0; walk slower clocks and SPI mode 3 */
++	static const uint32_t hz[5] = { 5000000u, 1000000u, 300000u, 5000000u, 1000000u };
++	static const int m3[5] = { 0, 0, 0, 1, 1 };
+ 	for (int retry = 0; retry < 5; retry++) {
++		t_hz = hz[retry];
++		t_mode3 = m3[retry];
++		spi_hw_setup();
++		(void)nvt_write_addr(NVT_ENG_RST_ADDR, 0x5a);
++		delay(2000);
+ 		nvt_bootloader_reset();
+ 		if (nvt_set_page(0x1F64E) == 0 && nvt_read(0x4E, id, 6) == 0 &&
+ 		    id[3] == 0x25 && id[4] == 0x65 && id[5] == 0x03) {
+-			TOUCH_SAY("NT36525B encontrado (id %02x %02x %02x %02x %02x %02x)", id[0], id[1], id[2],
+-			    id[3], id[4], id[5]);
++			TOUCH_SAY("NT36525B encontrado (modo %d, %u Hz)", t_mode3 ? 3 : 0, t_hz);
+ 			return 0;
+ 		}
++		TOUCH_SAY("tentativa %d (modo %d, %u Hz): id %02x%02x%02x%02x%02x%02x", retry + 1, t_mode3 ? 3 : 0, t_hz, id[0], id[1], id[2], id[3], id[4], id[5]);
+ 		if (retry == 4) {
+-			TOUCH_SAY("NT36525 nao respondeu (id %02x%02x%02x%02x%02x%02x)", id[0], id[1], id[2], id[3], id[4], id[5]);
+ 			LOG("NT36525 trim id %02x %02x %02x %02x %02x %02x: not Novatek", id[0], id[1], id[2],
+ 			    id[3], id[4], id[5]);
+ 		}
+-- 
+2.55.0.windows.5
+
