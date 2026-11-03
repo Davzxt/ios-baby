@@ -190,3 +190,27 @@ a01pvr_mmap(void *pvConnection, uint64_t pmr_handle, uint64_t *uaddr)
 	*uaddr = req.uaddr;
 	return (int)e;
 }
+
+/*
+ * On-screen GPU code, 4 letters: [1] S/N the firmware consumed every transfer queued before the
+ * latest one (- no transfer yet); [2] D a command was discarded; [3] H hardware lockup/recovery;
+ * [4] F page fault ([2]-[4] n = not seen). The kernel's GPU-test watcher prints it.
+ */
+IMG_CHAR g_a01_tq_fila = '-';
+extern IMG_CHAR g_a01_fw_discard, g_a01_fw_hwr, g_a01_fw_fault;
+extern void a01_fw_trace_scan(PVRSRV_RGXDEV_INFO *psDevInfo);
+
+void a01pvr_gpu_code(char *buf);
+void
+a01pvr_gpu_code(char *buf)
+{
+	if (gpsA01DevNode != NULL && gpsA01DevNode->eDevState == PVRSRV_DEVICE_STATE_ACTIVE &&
+	    gpsA01DevNode->pvDevice != NULL) {
+		a01_fw_trace_scan(gpsA01DevNode->pvDevice);
+	}
+	buf[0] = g_a01_tq_fila;
+	buf[1] = g_a01_fw_discard;
+	buf[2] = g_a01_fw_hwr;
+	buf[3] = g_a01_fw_fault;
+	buf[4] = '\0';
+}

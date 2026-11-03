@@ -4532,6 +4532,46 @@ a01_ft_noise(const IMG_CHAR *s)
 	return IMG_FALSE;
 }
 
+/* A01: sticky flags for the on-screen GPU code (the user reads 4 letters instead of photos):
+ * the firmware discarded a command, had a hardware lockup/recovery, or a page fault. */
+IMG_CHAR g_a01_fw_discard = 'n', g_a01_fw_hwr = 'n', g_a01_fw_fault = 'n';
+
+static IMG_BOOL
+a01_has(const IMG_CHAR *s, const IMG_CHAR *k)
+{
+	for (; *s != '\0'; s++)
+	{
+		const IMG_CHAR *a = s, *b = k;
+		while (*b != '\0' && *a == *b)
+		{
+			a++;
+			b++;
+		}
+		if (*b == '\0')
+		{
+			return IMG_TRUE;
+		}
+	}
+	return IMG_FALSE;
+}
+
+static void
+a01_ft_flags(const IMG_CHAR *s)
+{
+	if (a01_has(s, "iscard"))
+	{
+		g_a01_fw_discard = 'D';
+	}
+	if (a01_has(s, "ockup") || a01_has(s, "ecovery"))
+	{
+		g_a01_fw_hwr = 'H';
+	}
+	if (a01_has(s, " fault") || a01_has(s, " Fault") || a01_has(s, "FAULT"))
+	{
+		g_a01_fw_fault = 'F';
+	}
+}
+
 static void
 a01_ft_count(void *pvDumpDebugFile, const IMG_CHAR *pszFormat, ...)
 {
@@ -4542,6 +4582,7 @@ a01_ft_count(void *pvDumpDebugFile, const IMG_CHAR *pszFormat, ...)
 	va_start(ap, pszFormat);
 	OSVSNPrintf(szLine, sizeof(szLine), pszFormat, ap);
 	va_end(ap);
+	a01_ft_flags(szLine);
 	if (!a01_ft_noise(szLine))
 	{
 		a01_ft_lines++;
@@ -4593,6 +4634,15 @@ a01_dump_fw_trace_tail(DUMPDEBUG_PRINTF_FUNC *pfnDumpDebugPrintf, void *pvDumpDe
 	PVR_DUMPDEBUG_LOG("------[ A01: FW trace END ]------");
 }
 
+
+void a01_fw_trace_scan(PVRSRV_RGXDEV_INFO *psDevInfo);
+void
+a01_fw_trace_scan(PVRSRV_RGXDEV_INFO *psDevInfo)
+{
+	IMG_UINT32 ui32Lines = a01_ft_lines;
+	RGXDumpFirmwareTrace(a01_ft_count, NULL, psDevInfo);
+	a01_ft_lines = ui32Lines;
+}
 
 static const IMG_CHAR *_RGXGetDebugDevStateString(PVRSRV_DEVICE_STATE eDevState)
 {

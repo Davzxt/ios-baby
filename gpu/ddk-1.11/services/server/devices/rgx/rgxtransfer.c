@@ -682,6 +682,14 @@ PVRSRV_ERROR PVRSRVRGXSubmitTransferKM(RGX_SERVER_TQ_CONTEXT	*psTransferContext,
 	szFenceName[31] = '\0';
 	{	/* A01: each transfer submit (fill/copy/blit) as it arrives from Mesa */
 		static IMG_UINT32 ui32A01TQ;
+		extern IMG_CHAR g_a01_tq_fila;
+		extern void A01CCBOffsets(RGX_CLIENT_CCB *, IMG_UINT32 *, IMG_UINT32 *);
+		IMG_UINT32 rq = 0, wq = 0;
+		A01CCBOffsets(FWCommonContextGetClientCCB(psTransferContext->s3DData.psServerCommonContext), &rq, &wq);
+		if (wq != 0)
+		{
+			g_a01_tq_fila = (rq == wq) ? 'S' : 'N';
+		}
 		if (ui32A01TQ++ < 24 && ui32PrepareCount > 0)
 		{
 			extern void A01CCBOffsets(RGX_CLIENT_CCB *, IMG_UINT32 *, IMG_UINT32 *);
