@@ -38,6 +38,8 @@ static char g_log[1400];
  * per test GL1-GL7, + right, - wrong, ? running, . not run */
 static char g_gl_sum[11] = "..........";   /* GL1-GL7, then V1 V2 V3 (a01vktex.c) */
 void a01_vk_tex_test(void (*emit)(const char *), void (*step)(int), char marks[6]);
+/* V3's first and last pixel, for the kernel status block (the V lines scroll away) */
+static char g_v3[24] = "";
 static void vt_emit(const char *s);
 static void vt_step(int v);
 static size_t g_len;
@@ -151,7 +153,8 @@ snapshot(const char *state, int locked)
 	/* the verdict first, as one line to read off the screen at the next boot's report (which shows
 	 * only the first ~1 KB); the details follow */
 	if (strncmp(state, "fim OK", 6) == 0) {
-		n += (size_t)snprintf(buf + n, sizeof(buf) - n, "A01METAL: >>> RESULTADO: FUNCIONOU \"GL %s\" <<<\n", g_gl_sum);
+		n += (size_t)snprintf(buf + n, sizeof(buf) - n, "A01METAL: >>> RESULTADO: FUNCIONOU \"GL %s%s%s\" <<<\n", g_gl_sum,
+		                      g_v3[0] ? " V3 " : "", g_v3);
 	} else if (strncmp(state, "fim", 3) == 0 || strncmp(state, "ERRO", 4) == 0) {
 		/* the first kernel call that answered with an error (a01drm), the most useful clue */
 		void *drm1 = dlopen("/private/var/a01/lib/libdrm.2.dylib", RTLD_NOLOAD | RTLD_LAZY);
@@ -520,6 +523,14 @@ static void
 vt_emit(const char *s)
 {
 	report("%s", s);
+	/* "A01 >>> V3 (...): ERRO p0 p1 p2 p3 <<<": keep p0 and p3 */
+	if (strncmp(s, "A01 >>> V3 ", 11) == 0) {
+		const char *r = strstr(s, "): ");
+		char p[4][9];
+		if (r && sscanf(r + 3, "%*s %8s %8s %8s %8s", p[0], p[1], p[2], p[3]) == 4) {
+			snprintf(g_v3, sizeof(g_v3), "%s %s", p[0], p[3]);
+		}
+	}
 }
 
 static void
