@@ -331,3 +331,32 @@ if "A01 >>> VK: src" not in t:
         t = "#include <stdio.h>\n" + t
     f.write_text(t)
     print("pvr_arch_job_transfer.c: first TQ source state printed")
+
+# A01 experiment: PDS DOUTD (the DMA that loads image/sampler state and constants into the USC
+# common store) reads through the GPU caches in CMODE_CACHED. The GE8100 has an 8 KiB SLC set up
+# differently from the GE8320 (SLCSIZE8 / BRN 61450 bypasses); its TQ copy faults with the image
+# state written correctly by the CPU, as if the shader saw stale state. Bypass the caches for these
+# DMAs on Darwin (A01_PDS_DMA_CACHED=1 restores the original).
+f = mesa / "src/imagination/vulkan/pds/pvr_pds.c"
+t = f.read_text()
+if "A01: DOUTD cache bypass" not in t:
+    old = """   dma_control[0] |= PVR_ROGUE_PDSINST_DOUT_FIELDS_DOUTD_SRC1_CMODE_CACHED |
+                     PVR_ROGUE_PDSINST_DOUT_FIELDS_DOUTD_SRC1_DEST_COMMON_STORE;
+"""
+    if t.count(old) != 1:
+        raise SystemExit("pvr_pds.c: DOUTD control word not found")
+    new = """#if defined(__APPLE__) /* A01: DOUTD cache bypass (GE8100) */
+   {
+      const char *a01_c = getenv("A01_PDS_DMA_CACHED");
+      dma_control[0] |= ((a01_c && a01_c[0] == '1')
+                            ? PVR_ROGUE_PDSINST_DOUT_FIELDS_DOUTD_SRC1_CMODE_CACHED
+                            : PVR_ROGUE_PDSINST_DOUT_FIELDS_DOUTD_SRC1_CMODE_BYPASS) |
+                        PVR_ROGUE_PDSINST_DOUT_FIELDS_DOUTD_SRC1_DEST_COMMON_STORE;
+   }
+#else
+""" + old + "#endif\n"
+    t = t.replace(old, new, 1)
+    if "#include <stdlib.h>" not in t:
+        t = "#include <stdlib.h>\n" + t
+    f.write_text(t)
+    print("pvr_pds.c: DOUTD bypasses the GPU caches on Darwin")
