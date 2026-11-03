@@ -991,7 +991,12 @@ static void _RGXFreeListReconstruction(PDLLIST_NODE psNode)
 	ui32StartPage = (psFreeList->ui32MaxFLPages - psFreeList->ui32CurrentFLPages - psPMRNode->ui32NumPages);
 	uiOffset = psFreeList->uiFreeListPMROffset + ((ui32StartPage * sizeof(IMG_UINT32)) & ~((IMG_UINT64)RGX_BIF_PM_FREELIST_BASE_ADDR_ALIGNSIZE-1));
 
-	PMRUnwritePMPageList(psPMRNode->psPageList);
+	/* A01: a previous reconstruction whose PMRWritePMPageList failed leaves psPageList NULL; the
+	 * next GPU recovery then panicked in PMRUnwritePMPageList(NULL) (phone, 2026-11-03). */
+	if (psPMRNode->psPageList != NULL)
+	{
+		PMRUnwritePMPageList(psPMRNode->psPageList);
+	}
 	psPMRNode->psPageList = NULL;
 	eError = PMRWritePMPageList(
 			/* Target PMR, offset, and length */
