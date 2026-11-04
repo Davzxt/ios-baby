@@ -314,3 +314,8 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 ## 2026-11-04 - persistent touch and GPU diagnostic package
 - XNU run 41899607121 succeeded after adding the pinned BearSSL mirror fallback. Vulkan run 41895515730 and Metal run 41895515754 succeeded. The kernel contains the persistent TOQUE diagnostic and the Vulkan/test binaries contain the V9 zero-coordinate diagnostic.
 - AP_IOS16_BOOT_GPU_DIAG_3CPU_E73D367.tar.md5 SHA256 11e7474f7a2aa0092856e562be41c5dd923cf2c8095f2aa58c249925018488bc. Verified Odin MD5 and boot.img-only archive. Not tested on phone.
+
+## 2026-11-04 - diagnostic package device result
+- User: TOQUE S3 IFFFFFFFFFFFFF I3, V3 2B2B 802B 2B80 Z2020 6020. S3 means ID probe failed; I3 indicates both input-enable bits read as enabled. The displayed ID is all Fs by user report.
+- Z uses the same V3 shader with ALU interpolation coordinates forced to zero: 2020/6020 is within one byte of the expected 2121/6121 at the first two sample points. The coefficient term appears already interpolated for this draw; set zero as a trial default for pixel/centroid/sample varyings, preserving FragCoord and an opt-in for previous behavior. Not yet tested on device or other shapes.
+- Stock A01 Core pinctrl requests bias-disable for GPIO31-34 SPI and GPIO0 IRQ. Patch 0346 clears the corresponding pull enables/resistor bits, preserving unrelated pins. Hardware result unknown; IES enable alone did not restore touch.

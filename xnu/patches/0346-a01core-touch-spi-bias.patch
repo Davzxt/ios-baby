@@ -1,0 +1,18 @@
+diff --git a/bsd/dev/a01core_touch.c b/bsd/dev/a01core_touch.c
+--- a/bsd/dev/a01core_touch.c
++++ b/bsd/dev/a01core_touch.c
+@@ -1191,6 +1191,14 @@ pins_and_clock(void)
+ 	/* MT6739 pinctrl: GPIO33 (SPI MI) and GPIO0 (touch IRQ) IES. */
+ 	vm_offset_t iocfg = ml_io_map(0x10000000u, 0x4000);
+ 	if (iocfg) {
++		/* Match stock pinctrl bias-disable on SPI GPIO31-34. Their PU and
++		 * PD bits are 16-19 in IO_CFG_RB; retain every other pin's state. */
++		const uint32_t spi_bias = 0x0fu << 16;
++		wr(iocfg, 0x2a50u, rd(iocfg, 0x2a50u) & ~spi_bias);
++		wr(iocfg, 0x2a40u, rd(iocfg, 0x2a40u) & ~spi_bias);
++		/* GPIO0 interrupt also has bias-disable in the stock pinctrl. */
++		wr(iocfg, 0x2050u, rd(iocfg, 0x2050u) & ~1u);
++		wr(iocfg, 0x2060u, rd(iocfg, 0x2060u) & ~1u);
+ 		wr(iocfg, 0x2a30u, rd(iocfg, 0x2a30u) | (1u << 18));
+ 		wr(iocfg, 0x2030u, rd(iocfg, 0x2030u) | 1u);
+ 		nvt_diag_ies = ((rd(iocfg, 0x2a30u) >> 18) & 1u) | ((rd(iocfg, 0x2030u) & 1u) << 1);

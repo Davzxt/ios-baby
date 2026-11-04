@@ -87,17 +87,20 @@ rep("""   /* Skip cases that don't need handling. */
 #endif
 
  #if defined(__APPLE__)
-   /* Phone V3: (16,16), (48,16), (16,48) -> 3030, 9030, 3090;
-    * expected 2121, 6121, 2161. V6 confirms coords themselves are correct.
-    * Compensate the measured varying gradients only; do not alter FragCoord.
-    * The cause and validity for other primitives remain to be tested. */
+   /* Phone V9, with coordinates zeroed: 2020 at (16,16), 6020 at
+    * (48,16), close to the expected 2121 and 6121. The coefficient term
+    * appears already interpolated for this draw. Do not add the gradients a
+    * second time. This is a device-specific trial; other draws remain untested. */
    if (a01_alu) {
       const char *a01_s = getenv("A01_PVR_UNSCALED_ITER");
       const char *a01_z = getenv("A01_PVR_ITER_ZERO");
+      const char *a01_old = getenv("A01_PVR_ITER_TWO_THIRDS");
       if (a01_z && a01_z[0] == '1')
          coords = nir_fmul_imm(b, coords, 0.0f);
-      else if (!(a01_s && a01_s[0] == '1'))
+      else if (a01_old && a01_old[0] == '1')
          coords = nir_fmul_imm(b, coords, 2.0f / 3.0f);
+      else if (!(a01_s && a01_s[0] == '1'))
+         coords = nir_fmul_imm(b, coords, 0.0f);
    }
  #endif
 
