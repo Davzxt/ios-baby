@@ -265,8 +265,8 @@ run(int linear, int uvmode, uint8_t px[4][4], char *why, size_t n)
 		return 0;
 	}
 	/* uvmode: 0 texture, 1 uv colour, 2 constant smooth, 3 constant flat, 4 gl_FragCoord */
-	const unsigned char *vs = uvmode == 2 ? const_vert_spv : uvmode == 3 ? flat_vert_spv : tex_vert_spv;
-	size_t vsz = uvmode == 2 ? sizeof(const_vert_spv) : uvmode == 3 ? sizeof(flat_vert_spv) : sizeof(tex_vert_spv);
+	const unsigned char *vs = uvmode == 2 ? const_vert_spv : uvmode == 3 ? flat_vert_spv : uvmode == 5 ? xonly_vert_spv : uvmode == 6 ? yonly_vert_spv : tex_vert_spv;
+	size_t vsz = uvmode == 2 ? sizeof(const_vert_spv) : uvmode == 3 ? sizeof(flat_vert_spv) : uvmode == 5 ? sizeof(xonly_vert_spv) : uvmode == 6 ? sizeof(yonly_vert_spv) : sizeof(tex_vert_spv);
 	const unsigned char *fs = uvmode == 0 ? tex_frag_spv : uvmode == 3 ? flat_frag_spv : uvmode == 4 ? fragcoord_frag_spv : uv_frag_spv;
 	size_t fsz = uvmode == 0 ? sizeof(tex_frag_spv) : uvmode == 3 ? sizeof(flat_frag_spv)
 	           : uvmode == 4 ? sizeof(fragcoord_frag_spv) : sizeof(uv_frag_spv);
@@ -394,6 +394,8 @@ run(int linear, int uvmode, uint8_t px[4][4], char *why, size_t n)
 		} else if (uvmode) {
 			/* halved: pixel centre / 128: (16.5/128)*255 = 33 (0x21), (48.5/128)*255 = 97 (0x61) */
 			int ex = at[i][0] > 32 ? 97 : 33, ey = at[i][1] > 32 ? 97 : 33;
+			if (uvmode == 5) ey = 0;
+			if (uvmode == 6) ex = 0;
 			ok &= abs(px[i][0] - ex) <= 3 && abs(px[i][1] - ey) <= 3 && px[i][2] == 0 && px[i][3] == 255;
 		} else {
 			ok &= memcmp(px[i], texels + 4 * i, 4) == 0;
@@ -405,18 +407,18 @@ run(int linear, int uvmode, uint8_t px[4][4], char *why, size_t n)
 /* one "A01 >>> Vn ..." line per variant through emit() as soon as it is done (a hang or crash in a later
  * variant keeps the earlier lines); step(v) before each so the watchdog names the variant */
 void
-a01_vk_tex_test(void (*emit)(const char *), void (*step)(int), char marks[6])
+a01_vk_tex_test(void (*emit)(const char *), void (*step)(int), char marks[8])
 {
 	char out[300];
 	size_t n = sizeof(out);
 	char why[96] = "";
-	memset(marks, '-', 6);
+	memset(marks, '-', 8);
 	if (!init(why, sizeof(why))) {
 		snprintf(out, n, "A01 >>> VT: Vulkan nao iniciou (%s) <<<\n", why);
 		emit(out);
 		return;
 	}
-	for (int v = 0; v < 6; v++) {
+	for (int v = 0; v < 8; v++) {
 		uint8_t px[4][4];
 		memset(px, 0, sizeof(px));
 		why[0] = '\0';

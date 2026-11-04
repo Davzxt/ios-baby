@@ -276,3 +276,6 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 - Phone: TESTES GL ++-+-+-++-  V3 3030 9090  V6 2121 6161  c 3030; gesture bar drawn.
   V6 (gl_FragCoord) exact; V1/V2/GL6 pass; V3 ~1.5x expected (diagonal points only, x/y not separated).
 - docs/prompt-codex-handoff.md updated with the next steps for the whole UI.
+
+## 2026-11-03 - isolated varying diagnostics
+- Added V3 off-diagonal samples and V7/V8 single-axis varyings to distinguish interpolation gradients. Diagnostic changes only; no phone result or correction established.

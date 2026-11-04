@@ -15,8 +15,8 @@ glslangValidator -V -o "$OUT/tri.frag.spv" "$HERE/test/tri.frag"
 glslangValidator -V -o "$OUT/tex.vert.spv" "$HERE/test/tex.vert"
 glslangValidator -V -o "$OUT/tex.frag.spv" "$HERE/test/tex.frag"
 glslangValidator -V -o "$OUT/uv.frag.spv" "$HERE/test/uv.frag"
-for s in const.vert flat.vert flat.frag fragcoord.frag; do glslangValidator -V -o "$OUT/$s.spv" "$HERE/test/$s"; done
-( cd "$OUT" && xxd -i tex.vert.spv && xxd -i tex.frag.spv && xxd -i uv.frag.spv && xxd -i const.vert.spv && xxd -i flat.vert.spv && xxd -i flat.frag.spv && xxd -i fragcoord.frag.spv ) \
+for s in const.vert flat.vert flat.frag fragcoord.frag xonly.vert yonly.vert; do glslangValidator -V -o "$OUT/$s.spv" "$HERE/test/$s"; done
+( cd "$OUT" && xxd -i tex.vert.spv && xxd -i tex.frag.spv && xxd -i uv.frag.spv && xxd -i const.vert.spv && xxd -i flat.vert.spv && xxd -i flat.frag.spv && xxd -i fragcoord.frag.spv && xxd -i xonly.vert.spv && xxd -i yonly.vert.spv ) \
     | sed -e 's/^unsigned char/static const unsigned char __attribute__((aligned(4)))/' -e 's/^unsigned int/static const unsigned int/' \
     > "$OUT/tex_spv.h"
 ( cd "$OUT" && xxd -i tri.vert.spv && xxd -i tri.frag.spv ) \
