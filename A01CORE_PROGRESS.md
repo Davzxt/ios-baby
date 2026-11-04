@@ -310,3 +310,7 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 
 ## 2026-11-04 - diagnostic build dependency retry
 - xnu run 41895515816 attempts 1 and 2 failed fetching pinned BearSSL from bearssl.org (HTTP 502), before compilation. Added fallback to GitHub status-im/BearSSL; direct fetch verified the identical pinned commit 7bea48e5e850ab4cafbe68d3765cdaba13a86d6f.
+
+## 2026-11-04 - persistent touch and GPU diagnostic package
+- XNU run 41899607121 succeeded after adding the pinned BearSSL mirror fallback. Vulkan run 41895515730 and Metal run 41895515754 succeeded. The kernel contains the persistent TOQUE diagnostic and the Vulkan/test binaries contain the V9 zero-coordinate diagnostic.
+- AP_IOS16_BOOT_GPU_DIAG_3CPU_E73D367.tar.md5 SHA256 11e7474f7a2aa0092856e562be41c5dd923cf2c8095f2aa58c249925018488bc. Verified Odin MD5 and boot.img-only archive. Not tested on phone.
