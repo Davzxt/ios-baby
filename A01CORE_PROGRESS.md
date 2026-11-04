@@ -294,6 +294,11 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 ## 2026-11-04 - related ports research
 - Samsung Galaxy S8 `Floppikrob/ios-galaxy-s8`: project reports touch works on an S6SY761/HSI2C controller and CPU graphics only. Different touch hardware and GPU; not a ready driver for this phone. https://github.com/Floppikrob/ios-galaxy-s8
 - Galaxy S10+ `orhunnx/beyond2lte-ios`: reports partial touchscreen and CPU presentation, no working Mali GPU acceleration. https://github.com/orhunnx/beyond2lte-ios
+- Galaxy A5 `orhunnx/ios-a5xelte`: reports working home and touch, plus 21 bounded Mali shader tests; it explicitly does not claim GPU compositor rendering works. Different GPU. https://github.com/orhunnx/ios-a5xelte
 - `mouseos/UniXNU-a04br3`: MT8167 with a different PowerVR GE8300; reports GPU transfer/triangle tests and Metal plugin loading, but explicitly says full GPU UI composition remains unverified. Its Metal-to-Vulkan, host-memory import and tests merit investigation, not a drop-in driver. https://github.com/mouseos/UniXNU-a04br3
 - Pixel 4 `NWylynko/ios-flame` reports GPU UI via Metal/Turnip on Adreno; useful architecture reference, not an A01 Core GPU driver. https://github.com/NWylynko/ios-flame
 - Imagination documents upstream PowerVR Vulkan plus Zink: https://blog.imaginationtech.com/powervr-the-path-to-open-source-zink-and-opengl-es-support. No evidence this makes the GE8100 on iOS immediately functional.
+
+## 2026-11-04 - GPU and touch test package
+- XNU run 41805740590 success with patch 0343, confirmed by the touch marker in kernel; Vulkan run 41803499958 success, correction knob confirmed in dylib. Metal 41744605952, GL 41609024535, shim 41338560241 reused.
+- AP_IOS16_BOOT_GPU_DIAG_3CPU_015FEEA.tar.md5 SHA256 3f817a459ec94c2c74c0ca3ffe6fbd049a5a48b66ff321aa0bd1f9504cdce40a; Odin trailer valid and archive contains only boot.img. Not yet tested on phone.
