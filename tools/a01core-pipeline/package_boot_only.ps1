@@ -1,4 +1,9 @@
-param([switch]$SkipDownload)
+param(
+    [switch]$SkipDownload,
+    [string]$XnuArtifact = '13271625441',
+    [string]$VulkanArtifact = '13280073766',
+    [string]$PackageTag = 'DA22EDA'
+)
 $ErrorActionPreference = 'Stop'
 if (-not $SkipDownload) {
 $env:GIT_TERMINAL_PROMPT = '0'
@@ -9,7 +14,7 @@ if (-not $password) { throw 'GitHub credential unavailable' }
 $headers = @{ Authorization = 'Bearer ' + $password.Substring(9); 'User-Agent' = 'Codex' }
 $dir = Join-Path $PSScriptRoot '../../a01-package-work'
 New-Item -ItemType Directory -Force $dir | Out-Null
-$artifacts = @{ metal='13281959359'; vulkan='13280073766'; gl='13217064917'; xnu='13271625441'; shim='13096108025' }
+$artifacts = @{ metal='13281959359'; vulkan=$VulkanArtifact; gl='13217064917'; xnu=$XnuArtifact; shim='13096108025' }
 foreach ($name in $artifacts.Keys) {
     $zip = Join-Path $dir "$name.zip"
     Invoke-WebRequest -Headers $headers -Uri "https://api.github.com/repos/Davzxt/ios-baby/actions/artifacts/$($artifacts[$name])/zip" -OutFile $zip
@@ -36,7 +41,7 @@ Run-Python tools/a01core-drop.py $drop "/System/Library/Extensions/A01Metal.bund
 $adt = Join-Path $dir 'a01core.adt'
 $payload = Join-Path $dir 'payload.bin'
 $boot = Join-Path $dir 'boot.img'
-$output = Join-Path $dir 'AP_IOS16_BOOT_GPU_DIAG_3CPU_DA22EDA.tar.md5'
+$output = Join-Path $dir "AP_IOS16_BOOT_GPU_DIAG_3CPU_$PackageTag.tar.md5"
 $cmdline = 'cpus=3 keepsyms=1 -noprogress rd=emmcroot0 emmcroot=userdata emmcwrite=1 rootrw=1 cs_enforcement_disable=1 unentitled_ios_sim_launch=1 ignition_level=1 launchd_unsecure_cache=1 wdt=-1 -wdt_no_pmu wdt_test=no_user_checkin a5fb_keep_on=1 a01keys_home=1 sweetfb_lw=828 sweetfb_lh=1792 a01quiet=1 a01gpu=2 serial=3 herogl=1 a01gl=zink'
 Run-Python tools/mkadt_a01core.py $adt
 Run-Python tools/mkpayload.py $kernel $adt $payload --blob 'TouchFirmware=C:/A01CORE_RECOVERY/PORT_TEST/m3/td4150_a01core.img' --blob 'TouchFirmwareNVT=C:/Users/Admin/Desktop/ios_a03_core/a01core-kernel/firmware/tsp_novatek/nt36525_a01core_tp.bin' --blob 'GPUFirmware=C:/A01CORE_RECOVERY/VENDOR_EXTRACT/vendor/firmware/rgx.fw' --blob "A01Drop=$drop" --cmdline $cmdline

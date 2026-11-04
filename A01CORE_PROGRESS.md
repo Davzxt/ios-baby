@@ -288,3 +288,4 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 - Phone: V3 3030 9030 3090 X90 Y90; GL ++-+-+-++-. Both gradients are approximately 1.5 times expected, with no observed cross-axis mixing. V6 previously confirmed screen position.
 - Vulkan trial scales ALU interpolation coordinates by 2/3 after the FragCoord path; this is empirical and is not yet verified on the phone or for other primitives.
 - Touch: all previous SPI ID trials read ff. Stock MT6739 pinctrl maps SPI MISO GPIO33 input enable to 0x10002a30 bit 18 and IRQ GPIO0 input enable to 0x10002030 bit 0. Patch 0343 enables them before probing; unknown whether this resolves touch.
+- Phone, same diagnostic boot: user reached Home; only gesture bar and a broken widget were visible, without rounded corners or texture. Full GPU UI is not working.
