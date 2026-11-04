@@ -307,3 +307,6 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 - User: TESTES GL ++-+-+-++- V3 2B2B 802B 2B80 X80 Y80. Home unchanged and touch does not respond. No TOQUE line noticed. Correction reduced but did not fix V3; no full accelerated UI or working touch established.
 - Correction: the previous claimed local reconstruction check was invalid because git apply matched no files in the nested directory. CI subsequently built the touch change and its binary marker was verified; this does not prove touch works.
 - Next diagnostic: periodically show touch state, last controller ID and both input-enable readbacks; V9 compares V3 with ALU input coordinates forced to zero, testing whether a varying contribution remains in the coefficient term. These are diagnostic changes, not fixes.
+
+## 2026-11-04 - diagnostic build dependency retry
+- xnu run 41895515816 attempts 1 and 2 failed fetching pinned BearSSL from bearssl.org (HTTP 502), before compilation. Added fallback to GitHub status-im/BearSSL; direct fetch verified the identical pinned commit 7bea48e5e850ab4cafbe68d3765cdaba13a86d6f.
