@@ -271,3 +271,8 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 - Halved V3: 4141 at (16,16), c0c0 at (48,48) = exactly 2x: X_P/Y_P count half pixels on the GE8100.
   V6 (gl_FragCoord) 0: the ALU path iterated POS.xy, which has no coefficients.
 - patch-a01-aluiter.py now scales X_P/Y_P by 0.5 and returns them for gl_FragCoord.xy. Vulkan run 41739185875. Untested.
+
+## 2026-11-03 — first GPU UI element
+- Phone: TESTES GL ++-+-+-++-  V3 3030 9090  V6 2121 6161  c 3030; gesture bar drawn.
+  V6 (gl_FragCoord) exact; V1/V2/GL6 pass; V3 ~1.5x expected (diagonal points only, x/y not separated).
+- docs/prompt-codex-handoff.md updated with the next steps for the whole UI.

@@ -59,7 +59,7 @@ Key docs (read first): `A01CORE_PROGRESS.md` (evidence log, newest at the end), 
      **JimVulkan/img-pvr @ 9e1c0279** (Mesa 27-devel, PowerVR on DDK 1.11) and applies, in order:
      `../mesa/patch-mesa.py`, `patch-ge8100.py`, `patch-pvr-darwin.py`, `patch-a01-sync.py`,
      `patch-a01-opt.py`, `patch-a01-texdiag.py`, `patch-a01-nopersp.py`, `patch-a01-aluiter.py`,
-     `patch-a01-screeniter.py` (see section 7).
+     `patch-a01-screeniter.py` (see section 7). The pco_nir_opt cap, texture descriptor dump, linear varyings, ALU interpolation and screen position are all in these patches.
    - `gpu/a01gl/` → `libOSMesa.8.dylib` (Mesa **25.0.7** OSMesa with **Zink**), `libvulkan.1.dylib`
      (`a01vkloader.c`, a tiny loader exporting vkGetInstanceProcAddr/vkGetDeviceProcAddr),
      `libheroeagl.dylib` (EAGL shim injected into backboardd; source in `gpu/eagl`).
@@ -119,8 +119,46 @@ Every textured draw failed (GL3, GL5-GL7, UI). Findings, in order:
    Expected: V3 `424200ff c1c100ff`, V1/V2 the four colours, UI drawn correctly.
    Env knobs: `A01_PVR_HW_ITER=1`, `A01_PVR_TILE_ITER=1`, `A01_PVR_PERSP=1` restore upstream behaviour.
 
-If V3 is still wrong after step 5: (a) check whether C is per tile but offset by half a pixel (try
-coords = screen position − 0.5); (b) the real root cause is probably a GE8100 difference in how the TSP/
+6. Step 5 result (V3 now halved in the shader, V6 = gl_FragCoord/128, LINEAR render target read
+   directly by the CPU; the GPU copy back reported separately as `c`): `V3 4141 c0c0`, `c 0303` ⇒
+   X_P/Y_P count **half pixels** (exactly 2x). V6 was 0 because the ALU path also iterated POS.xy.
+7. `patch-a01-aluiter.py` now multiplies X_P/Y_P by 0.5 and returns them directly for gl_FragCoord.xy
+   (commit after c9f28de, Vulkan run 41739185875). **Latest phone result:**
+   `TESTES: GL ++-+-+-++-  V3 3030 9090  V6 2121 6161  c 3030`, and the **UI shows the gesture bar**
+   (first real UI element drawn by the GPU). Reading: GL1 GL2 GL4 GL6 V1 V2 pass; GL3 GL5 GL7 V3 fail.
+   **V6 is exactly right** (screen position fixed). V3 (uv*0.5, uv = vertex position 0..2 across the
+   64x64 target) reads ~1.5x the expected 0x21/0x61 at pixels (16,16)/(48,48). The GPU copy (`c`) now
+   matches V3's first pixel, so the TQ copy path is fixed. V1/V2 pass only because NEAREST on a 2x2
+   texture tolerates the scale error.
+
+### Next steps to get the WHOLE UI right (do these in order)
+A. **Separate x from y.** All test pixels are on the diagonal, so `uv.x = A*x + B*y + C` cannot tell
+   A from B. Add sample points off the diagonal, e.g. (16,48) and (48,16) (already read as px[1],
+   px[2] in `a01vktex.c`), and put them in the TESTES line (it holds ~47 characters after "GL ").
+   Also add a V7 with a varying that depends on x only (`uv = vec2(p.x, 0)`) and a V8 for y only.
+   Then fit A, B, C per component. Likely causes of 1.5x: Y_P is not half pixels (only X_P is), or
+   the coefficient set order is not (A, B, C) as `alu_iter` assumes (`coeffs` channel 0 * x, channel 1 * y,
+   channel 2 constant), or the plane is relative to a different origin (pixel corner vs centre).
+   Fix it in `patch-a01-aluiter.py`, rebuild only Vulkan (`a01vulkan.yml`), reuse the other run IDs.
+B. **Perspective.** `patch-a01-nopersp.py` forces linear iteration; with ALU interpolation working,
+   re-enable perspective (rhw = alu_iter of POS.w) and check it with a test that has w != 1, or keep
+   linear if the UI never needs it (CoreAnimation 3D transforms do use perspective).
+C. **Textures at real sizes.** GL5 (512x512 NEAREST) and GL7 (40x 256x256) must pass; GL6 (LINEAR +
+   blend) already does. Then mipmaps, CLAMP vs REPEAT, BGRA formats (CoreAnimation uses BGRA8 and
+   IOSurface-backed textures through the EAGL shim in `gpu/eagl/src/osm.c`).
+D. **Remaining faults.** `FALHA DM3 R c0c0c0f140 TCU` and `DM2 R 65c0eaf000 VDM`: re-check after A;
+   if they stay, log the faulting process/draw (kernel `a01pvr_gpu_fault`) and find which buffer or
+   texture is unmapped (likely freed memory reused while the GPU still reads it, or a 16 KiB-page
+   rounding issue in `pvr_srv_bo.c`).
+E. **Full UI check.** Boot `GPU_DIAG_3CPU`, compare with the CPU-drawn UI (`1GB_RAM` package): lock
+   screen wallpaper, clock, gesture bar, notifications, app icons after unlock. Ask the user what is
+   missing or wrong; every remaining artefact is a separate GL feature (blend modes, scissor,
+   stencil masks for rounded corners, YUV, gaussian blur shaders). Add a GLx test per feature.
+F. **Speed.** Then profile: shader cache (`-Dshader-cache` off now), avoid per-frame shader compiles,
+   zero-copy present, `cpus=3`/4.
+
+If the coefficient approach keeps failing: (a) check whether C is per tile but offset by half a pixel
+(try coords = screen position − 0.5); (b) the real root cause is probably a GE8100 difference in how the TSP/
 iterators get per-tile coefficients — compare our device info (`patch-ge8100.py`, derived from GE8300;
 USC/UVS values UNVERIFIED) and the 3D firmware command layout (GE8100 RGXFWIF_CMD3D is 336 bytes vs 328;
 8 zero bytes are inserted before `flags`; TA 136 vs 128, pad after `partial_render_ta_3d_fence`). The
