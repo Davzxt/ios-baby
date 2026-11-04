@@ -86,6 +86,18 @@ rep("""   /* Skip cases that don't need handling. */
    }
 #endif
 
+ #if defined(__APPLE__)
+   /* Phone V3: (16,16), (48,16), (16,48) -> 3030, 9030, 3090;
+    * expected 2121, 6121, 2161. V6 confirms coords themselves are correct.
+    * Compensate the measured varying gradients only; do not alter FragCoord.
+    * The cause and validity for other primitives remain to be tested. */
+   if (a01_alu) {
+      const char *a01_s = getenv("A01_PVR_UNSCALED_ITER");
+      if (!(a01_s && a01_s[0] == '1'))
+         coords = nir_fmul_imm(b, coords, 2.0f / 3.0f);
+   }
+ #endif
+
    enum glsl_interp_mode interp_mode = nir_intrinsic_interp_mode(bary);
    nir_def *rhw = NULL;
    if (interp_mode != INTERP_MODE_NOPERSPECTIVE)

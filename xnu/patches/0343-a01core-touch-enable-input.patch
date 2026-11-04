@@ -1,0 +1,28 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: a01core <a01core@localhost>
+Subject: [PATCH] a01core: enable touch SPI and interrupt input buffers
+
+MT6739 pinctrl maps GPIO33 input enable to IO_CFG_RB+0x30 bit 18 and
+GPIO0 input enable to IO_CFG_LT+0x30 bit 0. This remains a hardware trial.
+---
+diff --git a/bsd/dev/a01core_touch.c b/bsd/dev/a01core_touch.c
+--- a/bsd/dev/a01core_touch.c
++++ b/bsd/dev/a01core_touch.c
+@@ -1,6 +1,15 @@
+ static void
+ pins_and_clock(void)
+ {
++	/* MT6739 pinctrl: GPIO33 (SPI MI) and GPIO0 (touch IRQ) IES. */
++	vm_offset_t iocfg = ml_io_map(0x10000000u, 0x4000);
++	if (iocfg) {
++		wr(iocfg, 0x2a30u, rd(iocfg, 0x2a30u) | (1u << 18));
++		wr(iocfg, 0x2030u, rd(iocfg, 0x2030u) | 1u);
++		LOG("SPI input and IRQ input enabled");
++	} else {
++		LOG("IOCFG mapping failed");
++	}
+ 	for (unsigned i = 0; i < 4; i++) {
+ 		unsigned pin = spi_pins[i];
+ 		uint32_t v = rd(g_gpio, GPIO_MODE(pin));
+-- 
+2.55.0

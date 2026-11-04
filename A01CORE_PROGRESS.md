@@ -283,3 +283,8 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 ## 2026-11-04 - BOOT-only diagnostic package
 - a01metal CI 41744605952 succeeded for da22eda. Reused Vulkan 41739185875, GL 41609024535, XNU 41716709067, shim 41338560241.
 - Generated AP_IOS16_BOOT_GPU_DIAG_3CPU_DA22EDA.tar.md5; SHA256 5e61de2abd13fbb784332a067d7f6d306a63914a4c024c2d97a2b2c86a59c9a4. Odin MD5 trailer verified, tar contains only boot.img. No device result yet.
+
+## 2026-11-04 - off-axis varying results and touch input trial
+- Phone: V3 3030 9030 3090 X90 Y90; GL ++-+-+-++-. Both gradients are approximately 1.5 times expected, with no observed cross-axis mixing. V6 previously confirmed screen position.
+- Vulkan trial scales ALU interpolation coordinates by 2/3 after the FragCoord path; this is empirical and is not yet verified on the phone or for other primitives.
+- Touch: all previous SPI ID trials read ff. Stock MT6739 pinctrl maps SPI MISO GPIO33 input enable to 0x10002a30 bit 18 and IRQ GPIO0 input enable to 0x10002030 bit 0. Patch 0343 enables them before probing; unknown whether this resolves touch.
