@@ -288,4 +288,12 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 - Phone: V3 3030 9030 3090 X90 Y90; GL ++-+-+-++-. Both gradients are approximately 1.5 times expected, with no observed cross-axis mixing. V6 previously confirmed screen position.
 - Vulkan trial scales ALU interpolation coordinates by 2/3 after the FragCoord path; this is empirical and is not yet verified on the phone or for other primitives.
 - Touch: all previous SPI ID trials read ff. Stock MT6739 pinctrl maps SPI MISO GPIO33 input enable to 0x10002a30 bit 18 and IRQ GPIO0 input enable to 0x10002030 bit 0. Patch 0343 enables them before probing; unknown whether this resolves touch.
+- CI xnu 41803500171 succeeded but its logs show patch 0343 was skipped; the binary lacks the touch change and must not be represented as including it. Fixed the patch hunk location and verified it applies to the reconstructed touch source (0303, 0304, 0336, 0340). Workflow now fails if 0343 is skipped. Vulkan 41803499958 succeeded.
 - Phone, same diagnostic boot: user reached Home; only gesture bar and a broken widget were visible, without rounded corners or texture. Full GPU UI is not working.
+
+## 2026-11-04 - related ports research
+- Samsung Galaxy S8 `Floppikrob/ios-galaxy-s8`: project reports touch works on an S6SY761/HSI2C controller and CPU graphics only. Different touch hardware and GPU; not a ready driver for this phone. https://github.com/Floppikrob/ios-galaxy-s8
+- Galaxy S10+ `orhunnx/beyond2lte-ios`: reports partial touchscreen and CPU presentation, no working Mali GPU acceleration. https://github.com/orhunnx/beyond2lte-ios
+- `mouseos/UniXNU-a04br3`: MT8167 with a different PowerVR GE8300; reports GPU transfer/triangle tests and Metal plugin loading, but explicitly says full GPU UI composition remains unverified. Its Metal-to-Vulkan, host-memory import and tests merit investigation, not a drop-in driver. https://github.com/mouseos/UniXNU-a04br3
+- Pixel 4 `NWylynko/ios-flame` reports GPU UI via Metal/Turnip on Adreno; useful architecture reference, not an A01 Core GPU driver. https://github.com/NWylynko/ios-flame
+- Imagination documents upstream PowerVR Vulkan plus Zink: https://blog.imaginationtech.com/powervr-the-path-to-open-source-zink-and-opengl-es-support. No evidence this makes the GE8100 on iOS immediately functional.

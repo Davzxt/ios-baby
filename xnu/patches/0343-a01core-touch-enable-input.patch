@@ -8,7 +8,7 @@ GPIO0 input enable to IO_CFG_LT+0x30 bit 0. This remains a hardware trial.
 diff --git a/bsd/dev/a01core_touch.c b/bsd/dev/a01core_touch.c
 --- a/bsd/dev/a01core_touch.c
 +++ b/bsd/dev/a01core_touch.c
-@@ -1,6 +1,15 @@
+@@ -879,6 +879,15 @@
  static void
  pins_and_clock(void)
  {

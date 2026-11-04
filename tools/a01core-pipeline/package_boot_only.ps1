@@ -40,7 +40,9 @@ $drop = Join-Path $dir 'a01drop.pkg'
 Run-Python tools/a01core-drop.py $drop "/System/Library/Extensions/A01Metal.bundle/A01Metal=$dir/metal/A01Metal.bundle/A01Metal" "/System/Library/Extensions/A01Metal.bundle/Info.plist=$dir/metal/A01Metal.bundle/Info.plist" "lib/libvulkan_powervr.dylib=$dir/vulkan/libvulkan_powervr.dylib" "lib/libdrm.2.dylib=$dir/vulkan/libdrm.2.dylib" "lib/libA01Metal.dylib=$dir/metal/libA01Metal.dylib" "lib/libOSMesa.8.dylib=$dir/gl/lib/libOSMesa.8.dylib" "lib/libvulkan.1.dylib=$dir/gl/lib/libvulkan.1.dylib" "lib/libheroeagl.dylib=$dir/gl/lib/libheroeagl.dylib" "/private/var/herolte/autorun=$dir/metal/a01metal-test"
 $adt = Join-Path $dir 'a01core.adt'
 $payload = Join-Path $dir 'payload.bin'
-$boot = Join-Path $dir 'boot.img'
+$bootDir = Join-Path $dir $PackageTag
+New-Item -ItemType Directory -Force $bootDir | Out-Null
+$boot = Join-Path $bootDir 'boot.img'
 $output = Join-Path $dir "AP_IOS16_BOOT_GPU_DIAG_3CPU_$PackageTag.tar.md5"
 $cmdline = 'cpus=3 keepsyms=1 -noprogress rd=emmcroot0 emmcroot=userdata emmcwrite=1 rootrw=1 cs_enforcement_disable=1 unentitled_ios_sim_launch=1 ignition_level=1 launchd_unsecure_cache=1 wdt=-1 -wdt_no_pmu wdt_test=no_user_checkin a5fb_keep_on=1 a01keys_home=1 sweetfb_lw=828 sweetfb_lh=1792 a01quiet=1 a01gpu=2 serial=3 herogl=1 a01gl=zink'
 Run-Python tools/mkadt_a01core.py $adt
