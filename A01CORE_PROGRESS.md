@@ -279,3 +279,7 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 
 ## 2026-11-03 - isolated varying diagnostics
 - Added V3 off-diagonal samples and V7/V8 single-axis varyings to distinguish interpolation gradients. Diagnostic changes only; no phone result or correction established.
+
+## 2026-11-04 - BOOT-only diagnostic package
+- a01metal CI 41744605952 succeeded for da22eda. Reused Vulkan 41739185875, GL 41609024535, XNU 41716709067, shim 41338560241.
+- Generated AP_IOS16_BOOT_GPU_DIAG_3CPU_DA22EDA.tar.md5; SHA256 5e61de2abd13fbb784332a067d7f6d306a63914a4c024c2d97a2b2c86a59c9a4. Odin MD5 trailer verified, tar contains only boot.img. No device result yet.
