@@ -93,7 +93,10 @@ rep("""   /* Skip cases that don't need handling. */
     * The cause and validity for other primitives remain to be tested. */
    if (a01_alu) {
       const char *a01_s = getenv("A01_PVR_UNSCALED_ITER");
-      if (!(a01_s && a01_s[0] == '1'))
+      const char *a01_z = getenv("A01_PVR_ITER_ZERO");
+      if (a01_z && a01_z[0] == '1')
+         coords = nir_fmul_imm(b, coords, 0.0f);
+      else if (!(a01_s && a01_s[0] == '1'))
          coords = nir_fmul_imm(b, coords, 2.0f / 3.0f);
    }
  #endif

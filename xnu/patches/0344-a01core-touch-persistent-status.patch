@@ -1,0 +1,75 @@
+diff --git a/bsd/dev/a01core_touch.c b/bsd/dev/a01core_touch.c
+--- a/bsd/dev/a01core_touch.c
++++ b/bsd/dev/a01core_touch.c
+@@ -690,6 +690,15 @@
+ #define NVT_MAX_PARTS        24u
+ #define TOUCH_SAY(fmt, ...)  printf("A01 >>> TOQUE: " fmt " <<<\n", ##__VA_ARGS__)
+ 
++/* Diagnostic snapshot: 1 probe, 2 ID found, 3 no ID, 4 firmware error,
++ * 5 downloading, 6 ready. Updated by the touch thread, read for status. */
++static volatile uint32_t nvt_diag_state, nvt_diag_id_hi, nvt_diag_id_lo, nvt_diag_ies;
++void a01core_touch_status(void);
++void a01core_touch_status(void)
++{
++    printf("A01 >>> TOQUE: S%u ID%08x%04x I%u <<<\n", nvt_diag_state,
++        nvt_diag_id_hi, nvt_diag_id_lo, nvt_diag_ies);
++}
+ static uint8_t *nvt_tx, *nvt_rx;
+ static const uint8_t *nvt_fw;
+ static uint32_t nvt_fw_len;
+@@ -762,9 +771,15 @@
+ 		nvt_bootloader_reset();
+ 		if (nvt_set_page(0x1F64E) == 0 && nvt_read(0x4E, id, 6) == 0 &&
+ 		    id[3] == 0x25 && id[4] == 0x65 && id[5] == 0x03) {
++			nvt_diag_state = 2;
++			nvt_diag_id_hi = (uint32_t)id[0] << 24 | (uint32_t)id[1] << 16 | (uint32_t)id[2] << 8 | id[3];
++			nvt_diag_id_lo = (uint32_t)id[4] << 8 | id[5];
+ 			TOUCH_SAY("NT36525B encontrado (modo %d, %u Hz)", t_mode3 ? 3 : 0, t_hz);
+ 			return 0;
+ 		}
++		nvt_diag_id_hi = (uint32_t)id[0] << 24 | (uint32_t)id[1] << 16 | (uint32_t)id[2] << 8 | id[3];
++		nvt_diag_id_lo = (uint32_t)id[4] << 8 | id[5];
++		nvt_diag_state = 3;
+ 		TOUCH_SAY("tentativa %d (modo %d, %u Hz): id %02x%02x%02x%02x%02x%02x", retry + 1, t_mode3 ? 3 : 0, t_hz, id[0], id[1], id[2], id[3], id[4], id[5]);
+ 		if (retry == 4) {
+ 			LOG("NT36525 trim id %02x %02x %02x %02x %02x %02x: not Novatek", id[0], id[1], id[2],
+@@ -971,6 +986,7 @@
+ static void
+ nvt_run(void)
+ {
++	nvt_diag_state = 1;
+ 	TOUCH_SAY("procurando o controlador NT36525B");
+ 	nvt_tx = kalloc_data(NVT_XFER + 8, Z_WAITOK | Z_ZERO);
+ 	nvt_rx = kalloc_data(256, Z_WAITOK | Z_ZERO);
+@@ -983,12 +999,15 @@
+ 		return;
+ 	}
+ 	if (nvt_fw_parse() != 0) {
++		nvt_diag_state = 4;
+ 		for (;;) {
+ 			t_msleep(60000);
+ 		}
+ 	}
+ 	for (int attempt = 0;; attempt++) {
++		nvt_diag_state = 5;
+ 		if (nvt_download() != 0) {
++			nvt_diag_state = 4;
+ 			TOUCH_SAY("falha ao carregar o firmware (tentativa %d)", attempt + 1);
+ 			if (attempt >= 4) {
+ 				for (;;) {
+@@ -999,6 +1018,7 @@
+ 			continue;
+ 		}
+ 		nvt_fw_info();
++		nvt_diag_state = 6;
+ 		TOUCH_SAY("pronto");
+ 		uint8_t pd[NVT_POINTS];
+ 		unsigned wdt = 0;
+@@ -1173,6 +1193,7 @@
+ 	if (iocfg) {
+ 		wr(iocfg, 0x2a30u, rd(iocfg, 0x2a30u) | (1u << 18));
+ 		wr(iocfg, 0x2030u, rd(iocfg, 0x2030u) | 1u);
++		nvt_diag_ies = ((rd(iocfg, 0x2a30u) >> 18) & 1u) | ((rd(iocfg, 0x2030u) & 1u) << 1);
+ 		LOG("SPI input and IRQ input enabled");
+ 	} else {
+ 		LOG("IOCFG mapping failed");

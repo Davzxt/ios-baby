@@ -140,7 +140,7 @@ jobs:
           echo "A01CORE_DEFINES=$A01CORE_DEFINES"
           ccache -z || true
           bash build.sh 2>&1 | tee ../build.log
-          if grep -E 'Skipping patch .*0343-a01core-touch-enable-input\.patch' ../build.log; then
+          if grep -E 'Skipping patch .*034[345]-a01core-touch-.*\.patch' ../build.log; then
             echo 'Required A01CORE touch patch was skipped' >&2
             exit 1
           fi

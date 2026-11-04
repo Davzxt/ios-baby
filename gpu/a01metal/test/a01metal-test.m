@@ -37,10 +37,10 @@ static char g_log[1400];
 /* GL summary for the kernel status block (first line of autorun.out, between quotes): one mark
  * per test GL1-GL7, + right, - wrong, ? running, . not run */
 static char g_gl_sum[11] = "..........";   /* GL1-GL7, then V1 V2 V3 (a01vktex.c) */
-void a01_vk_tex_test(void (*emit)(const char *), void (*step)(int), char marks[8]);
+void a01_vk_tex_test(void (*emit)(const char *), void (*step)(int), char marks[9]);
 /* V3's first and last pixel, for the kernel status block (the V lines scroll away) */
 static char g_v3[40] = "";
-static char g_v3s[20], g_xs[3], g_ys[3];
+static char g_v3s[20], g_xs[3], g_ys[3], g_zs[12];
 static void vt_emit(const char *s);
 static void vt_step(int v);
 static size_t g_len;
@@ -527,7 +527,8 @@ vt_emit(const char *s)
 	/* Three V3 points reveal the x/y gradients; X/Y isolate one varying each. */
 	int vn = strncmp(s, "A01 >>> V3 ", 11) == 0 ? 3 :
 	         strncmp(s, "A01 >>> V7 ", 11) == 0 ? 7 :
-	         strncmp(s, "A01 >>> V8 ", 11) == 0 ? 8 : 0;
+	         strncmp(s, "A01 >>> V8 ", 11) == 0 ? 8 :
+	         strncmp(s, "A01 >>> V9 ", 11) == 0 ? 9 : 0;
 	if (vn) {
 		const char *r = strstr(s, "): ");
 		char p[4][9];
@@ -537,10 +538,12 @@ vt_emit(const char *s)
 				snprintf(g_v3s, sizeof(g_v3s), "%s %s %s", p[0], p[1], p[2]);
 			} else if (vn == 7) {
 				snprintf(g_xs, sizeof(g_xs), "%.2s", p[1]);
-			} else {
+			} else if (vn == 8) {
 				snprintf(g_ys, sizeof(g_ys), "%.2s", p[2] + 2);
+			} else {
+				snprintf(g_zs, sizeof(g_zs), "%.4s %.4s", p[0], p[1]);
 			}
-			snprintf(g_v3, sizeof(g_v3), "%s X%s Y%s", g_v3s, g_xs, g_ys);
+			snprintf(g_v3, sizeof(g_v3), "%s Z%s", g_v3s, g_zs);
 		}
 	}
 }
@@ -548,8 +551,8 @@ vt_emit(const char *s)
 static void
 vt_step(int v)
 {
-	static const char *const names[8] = { "GL V1 textura copia", "GL V2 textura linear", "GL V3 coordenada",
-	                                      "GL V4 constante", "GL V5 constante flat", "GL V6 posicao", "GL V7 eixo X", "GL V8 eixo Y" };
+	static const char *const names[9] = { "GL V1 textura copia", "GL V2 textura linear", "GL V3 coordenada",
+	                                      "GL V4 constante", "GL V5 constante flat", "GL V6 posicao", "GL V7 eixo X", "GL V8 eixo Y", "GL V9 coeficiente" };
 	A01MTLStep = names[v];
 }
 
@@ -1097,7 +1100,7 @@ int main(int argc, char **argv)
 			/* texture sampling straight on Vulkan, without Zink: V1 GPU copy upload, V2 CPU-written linear */
 			STEP("GL V textura direto no Vulkan");
 			g_gl_sum[7] = g_gl_sum[8] = g_gl_sum[9] = '?';
-			char marks[8];
+			char marks[9];
 			a01_vk_tex_test(vt_emit, vt_step, marks);
 			g_gl_sum[7] = marks[0];
 			g_gl_sum[8] = marks[1];

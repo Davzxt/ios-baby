@@ -407,23 +407,25 @@ run(int linear, int uvmode, uint8_t px[4][4], char *why, size_t n)
 /* one "A01 >>> Vn ..." line per variant through emit() as soon as it is done (a hang or crash in a later
  * variant keeps the earlier lines); step(v) before each so the watchdog names the variant */
 void
-a01_vk_tex_test(void (*emit)(const char *), void (*step)(int), char marks[8])
+a01_vk_tex_test(void (*emit)(const char *), void (*step)(int), char marks[9])
 {
 	char out[300];
 	size_t n = sizeof(out);
 	char why[96] = "";
-	memset(marks, '-', 8);
+	memset(marks, '-', 9);
 	if (!init(why, sizeof(why))) {
 		snprintf(out, n, "A01 >>> VT: Vulkan nao iniciou (%s) <<<\n", why);
 		emit(out);
 		return;
 	}
-	for (int v = 0; v < 8; v++) {
+	for (int v = 0; v < 9; v++) {
 		uint8_t px[4][4];
 		memset(px, 0, sizeof(px));
 		why[0] = '\0';
 		step(v);
-		int ok = run(v == 1, v >= 2 ? v - 1 : 0, px, why, sizeof(why));
+		if (v == 8) setenv("A01_PVR_ITER_ZERO", "1", 1);
+		int ok = run(v == 1, v == 8 ? 1 : v >= 2 ? v - 1 : 0, px, why, sizeof(why));
+		if (v == 8) unsetenv("A01_PVR_ITER_ZERO");
 		marks[v] = ok ? '+' : '-';
 		snprintf(out, n,
 		                 "A01 >>> V%d (%s): %s %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x%s%s <<<\n", v + 1,

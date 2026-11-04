@@ -302,3 +302,8 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 ## 2026-11-04 - GPU and touch test package
 - XNU run 41805740590 success with patch 0343, confirmed by the touch marker in kernel; Vulkan run 41803499958 success, correction knob confirmed in dylib. Metal 41744605952, GL 41609024535, shim 41338560241 reused.
 - AP_IOS16_BOOT_GPU_DIAG_3CPU_015FEEA.tar.md5 SHA256 3f817a459ec94c2c74c0ca3ffe6fbd049a5a48b66ff321aa0bd1f9504cdce40a; Odin trailer valid and archive contains only boot.img. Not yet tested on phone.
+
+## 2026-11-04 - device test of 015FEEA
+- User: TESTES GL ++-+-+-++- V3 2B2B 802B 2B80 X80 Y80. Home unchanged and touch does not respond. No TOQUE line noticed. Correction reduced but did not fix V3; no full accelerated UI or working touch established.
+- Correction: the previous claimed local reconstruction check was invalid because git apply matched no files in the nested directory. CI subsequently built the touch change and its binary marker was verified; this does not prove touch works.
+- Next diagnostic: periodically show touch state, last controller ID and both input-enable readbacks; V9 compares V3 with ALU input coordinates forced to zero, testing whether a varying contribution remains in the coefficient term. These are diagnostic changes, not fixes.
