@@ -41,6 +41,7 @@ void a01_vk_tex_test(void (*emit)(const char *), void (*step)(int), char marks[9
 /* V3's first and last pixel, for the kernel status block (the V lines scroll away) */
 static char g_v3[40] = "";
 static char g_gl2_pixel = '?';
+static char g_gl3_quad[5] = "????", g_gl_dir[3] = "??";
 static char g_v3s[20], g_xs[3], g_ys[3], g_zs[12];
 static void vt_emit(const char *s);
 static void vt_step(int v);
@@ -677,6 +678,7 @@ gl_zink_test(void)
 	ReadPixels(16, 48, 1, 1, A01_GL_RGBA, A01_GL_UNSIGNED_BYTE, px[2]);
 	ReadPixels(48, 48, 1, 1, A01_GL_RGBA, A01_GL_UNSIGNED_BYTE, px[3]);
 	gl_px(a, sizeof(a), px[0]); gl_px(b, sizeof(b), px[1]); gl_px(c, sizeof(c), px[2]); gl_px(d, sizeof(d), px[3]);
+	snprintf(g_gl3_quad, sizeof(g_gl3_quad), "%c%c%c%c", gl_colour(px[0]), gl_colour(px[1]), gl_colour(px[2]), gl_colour(px[3]));
 	report("A01 >>> GL3: textura %s %s %s %s (ff0000ff 00ff00ff 0000ffff ffffffff) <<<\n", a, b, c, d);
 	g_gl_sum[2] = strcmp(a, "ff0000ff") == 0 && strcmp(b, "00ff00ff") == 0 && strcmp(c, "0000ffff") == 0 &&
 	              strcmp(d, "ffffffff") == 0 ? '+' : '-';
@@ -707,6 +709,16 @@ gl_zink_test(void)
 		A01MTLStep = "GL fim";
 		return;
 	}
+	/* Orientation control without textures, after the same 720x1480 -> 64x64 switch as GL5. */
+	Disable(A01_GL_TEXTURE_2D);
+	Color4f(1, 0, 0, 1);
+	Begin(A01_GL_QUADS); Vertex2f(-1, -1); Vertex2f(1, -1); Vertex2f(1, 0); Vertex2f(-1, 0); End();
+	Color4f(0, 0, 1, 1);
+	Begin(A01_GL_QUADS); Vertex2f(-1, 0); Vertex2f(1, 0); Vertex2f(1, 1); Vertex2f(-1, 1); End();
+	Finish();
+	ReadPixels(16, 16, 1, 1, A01_GL_RGBA, A01_GL_UNSIGNED_BYTE, px[0]);
+	ReadPixels(16, 48, 1, 1, A01_GL_RGBA, A01_GL_UNSIGNED_BYTE, px[1]);
+	snprintf(g_gl_dir, sizeof(g_gl_dir), "%c%c", gl_colour(px[0]), gl_colour(px[1]));
 	void (*DeleteTextures)(int, const unsigned *) = (__typeof__(DeleteTextures))proc("glDeleteTextures");
 	void (*BlendFunc)(unsigned, unsigned) = (__typeof__(BlendFunc))proc("glBlendFunc");
 	static uint8_t q[512 * 512 * 4];
@@ -770,7 +782,7 @@ gl_zink_test(void)
 		}
 		gl_px(a, sizeof(a), px[0]); gl_px(b, sizeof(b), px[1]); gl_px(c, sizeof(c), px[2]); gl_px(d, sizeof(d), px[3]);
 		if (tl == 0) {
-			snprintf(g_v3, sizeof(g_v3), "2%c 5%c%c%c%c", g_gl2_pixel, gl_colour(px[0]), gl_colour(px[1]), gl_colour(px[2]), gl_colour(px[3]));
+			snprintf(g_v3, sizeof(g_v3), "3%s 5%c%c%c%c D%s", g_gl3_quad, gl_colour(px[0]), gl_colour(px[1]), gl_colour(px[2]), gl_colour(px[3]), g_gl_dir);
 		}
 		report("A01 >>> %.3s: %s erradas %u/%u, ultimo %s %s %s %s <<<\n", names[tl], bad_rounds ? "ERRO" : "OK",
 		       bad_rounds, rounds, a, b, c, d);

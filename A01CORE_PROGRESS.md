@@ -343,3 +343,7 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 ## 2026-11-04 - compact texture diagnostics
 - Metal run 41933779559 succeeded; reused XNU 41907208806, Vulkan 41907208900, GL 41609024535 and shim 41338560241. AP_IOS16_BOOT_GPU_DIAG_3CPU_2E53C20.tar.md5 SHA256 4ec54a251d3633314b0535b73c0e8b9d693bbd25923229c6981a37700d5f1643; BOOT-only and Odin MD5 verified. Untested on phone.
 - Direct GPU presentation remains unimplemented: A01 hooks return inactive, and present falls back to glReadPixels plus CPU copy. Existing DDK PMRs own a01gpu_buf allocations; an IOSurface-backed import, lifetime management and synchronization are still needed.
+
+## 2026-11-04 - compact texture result
+- User reported P 2G 5BWRG: GL2 green as expected; GL5 actual quadrants blue, white, red, green instead of red, green, blue, white, corresponding to a vertical inversion in the observed pixels. Cause could be texture upload, coordinate orientation, or GL readback.
+- Prepared GL3 small-texture and GL5 large-texture quadrant letters plus a red-bottom/blue-top untextured control drawn after the same context switch. This distinguishes general draw/readback inversion from texture-specific inversion. Direct GPU IOSurface transfer remains unimplemented.
