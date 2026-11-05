@@ -368,3 +368,8 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 ## 2026-11-05 - experimental IOSurface orientation workaround
 - Prepared A01-only EAGL build transform that reverses copied IOSurface upload rows in backboardd when GALLIUM_DRIVER=zink; A01_IOSURFACE_FLIP=0 opts out. This tests the observed BWRG orientation without changing shared EAGL source or non-A01 builds. It may worsen some images; no device result and no zero-copy implementation.
 - Local verification: patch applies once to current EAGL source and emits LF, shell syntax passes, row selection checked for both source orientations. iOS compilation pending.
+
+### Pacote E5367EC — 2026-11-05
+- Build a01gl GitHub Actions 42102574558 concluído com sucesso; artifact 13451345076. A biblioteca compilada contém os marcadores `A01_IOSURFACE_FLIP` e `backboardd`.
+- Pacote local `AP_IOS16_BOOT_GPU_DIAG_3CPU_E5367EC.tar.md5` gerado; SHA-256 `a74167fcf5e8e6741a0090c2358bffe94c50363f5750287d9d14965f27036ca7`. O TAR contém somente `boot.img`; MD5 do trailer verificado.
+- A correção experimental inverte linhas em cópias de IOSurface no backboardd com Zink. Ainda não foi testada no aparelho; pode melhorar ou piorar a imagem. Não implementa transferência direta para GPU nem corrige a falha de detecção do toque.
