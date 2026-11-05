@@ -339,3 +339,7 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 ## 2026-11-04 - graphics presentation investigation
 - A01 uses Zink on GE8100 for GL when available, but the A01 hardware-surface hooks are stubs: the EAGL layer falls back to readback and CPU copies into IOSurfaces. Full GPU-only presentation is not implemented. Host memory import and correct sync/lifetimes are required before replacing this path.
 - Prepared a short GL2/GL5 colour classification line (R/G/B/W/K/?), reporting all four large-texture samples to avoid long ambiguous hexadecimal values. This is diagnosis, not a fix.
+
+## 2026-11-04 - compact texture diagnostics
+- Metal run 41933779559 succeeded; reused XNU 41907208806, Vulkan 41907208900, GL 41609024535 and shim 41338560241. AP_IOS16_BOOT_GPU_DIAG_3CPU_2E53C20.tar.md5 SHA256 4ec54a251d3633314b0535b73c0e8b9d693bbd25923229c6981a37700d5f1643; BOOT-only and Odin MD5 verified. Untested on phone.
+- Direct GPU presentation remains unimplemented: A01 hooks return inactive, and present falls back to glReadPixels plus CPU copy. Existing DDK PMRs own a01gpu_buf allocations; an IOSurface-backed import, lifetime management and synchronization are still needed.
