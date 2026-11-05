@@ -359,3 +359,7 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 
 ## 2026-11-04 - constant-coordinate texture diagnosis
 - Metal run 41937178162 succeeded; reused XNU 41907208806, Vulkan 41907208900, GL 41609024535 and shim 41338560241. AP_IOS16_BOOT_GPU_DIAG_3CPU_9748531.tar.md5 SHA256 8db709d0f01783422ec88877b3658a6f0fc292e7bab324489d688ade72d56824; BOOT-only and Odin MD5 verified. Untested. C reports constant texture samples; K reports black clear.
+
+## 2026-11-05 - constant-coordinate result
+- User reported CRR KK: constant UV draw read red at both tested positions, and clear/readback returned black. Thus the later draw and clear can change the output, and constant coordinates select the expected texel. Earlier varying-UV reversal still produced BWRG, so a simple unconditional texture flip is not established as safe. User requests a correction rather than further diagnostic prompts.
+- Examined pinned Mesa pco_trans_nir.c: ALU path reads COEFF registers; observed constant-coordinate result and varying-coordinate failure remain insufficient to determine whether negative gradients, attribute assembly, or texture sampling is responsible. Direct IOSurface/GPU transfer remains unimplemented.
