@@ -348,3 +348,7 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 - User reported P 2G 5BWRG: GL2 green as expected; GL5 actual quadrants blue, white, red, green instead of red, green, blue, white, corresponding to a vertical inversion in the observed pixels. Cause could be texture upload, coordinate orientation, or GL readback.
 - Prepared GL3 small-texture and GL5 large-texture quadrant letters plus a red-bottom/blue-top untextured control drawn after the same context switch. This distinguishes general draw/readback inversion from texture-specific inversion. Direct GPU IOSurface transfer remains unimplemented.
 - Added an isolated GL5 trial that flips texture V coordinates and reports F quadrants alongside the normal draw and untextured direction control. This is a test of a possible correction; it does not modify the iOS interface. Await build and phone result.
+
+## 2026-11-04 - orientation control package
+- Metal run 41935565328 succeeded; reused XNU 41907208806, Vulkan 41907208900, GL 41609024535 and shim 41338560241. AP_IOS16_BOOT_GPU_DIAG_3CPU_9F795FA.tar.md5 SHA256 2673650df6a2f58b903857be967ca6591d9adfd194fabef3fb26257e01da8f83: BOOT-only and Odin MD5 verified. Untested on phone. 3/5/D/F status compares small/large texture, untextured orientation and V-flipped test.
+- Direct GPU-to-IOSurface transfer is not implemented. Existing allocation path uses private GPU PMRs and unsupported DMA-BUF imports; an IOSurface-backed import and Zink resource sharing require separate implementation and validation.
