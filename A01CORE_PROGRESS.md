@@ -332,3 +332,6 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 ## 2026-11-04 - texture pixel diagnosis and display size
 - Metal diagnostic run 41930595427 succeeded. Reused XNU 41907208806, Vulkan 41907208900, GL 41609024535 and shim 41338560241. Physical panel is 720x1480; configured logical canvas is 828x1792 and the framebuffer path uses nearest-neighbour downscaling. User-reported pixelation may also come from unresolved GPU rendering; not verified which.
 - AP_IOS16_BOOT_GPU_DIAG_3CPU_828E639.tar.md5 SHA256 232e5228dda13f57351211eae2f076548d603c977fd331acccc532e2d98a9408, verified Odin trailer and boot.img-only archive. Contains GL2 and GL5 pixel diagnostics, no new rendering fix. Untested on phone.
+
+## 2026-11-04 - texture pixel diagnostic result
+- User typed P 200FF00FF 500FFFF FFFFFFFF: GL2 pixel appears 00FF00FF (expected green), GL5 second sample FFFFFFFF; the first GL5 group as transcribed is incomplete/ambiguous (00FFFF). Asked user to recheck; do not infer missing digits. No phone rendering fix established.
