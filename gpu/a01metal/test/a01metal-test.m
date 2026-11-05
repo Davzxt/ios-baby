@@ -40,7 +40,7 @@ static char g_gl_sum[11] = "..........";   /* GL1-GL7, then V1 V2 V3 (a01vktex.c
 void a01_vk_tex_test(void (*emit)(const char *), void (*step)(int), char marks[9]);
 /* V3's first and last pixel, for the kernel status block (the V lines scroll away) */
 static char g_v3[40] = "";
-static char g_gl2_pixel[9] = "--------";
+static char g_gl2_pixel = '?';
 static char g_v3s[20], g_xs[3], g_ys[3], g_zs[12];
 static void vt_emit(const char *s);
 static void vt_step(int v);
@@ -557,6 +557,19 @@ vt_step(int v)
 	A01MTLStep = names[v];
 }
 
+/* Classify exact opaque test colours for a short status line. */
+static char
+gl_colour(const uint8_t *p)
+{
+    if (p[3] != 255) return '?';
+    if (p[0] == 255 && p[1] == 0 && p[2] == 0) return 'R';
+    if (p[0] == 0 && p[1] == 255 && p[2] == 0) return 'G';
+    if (p[0] == 0 && p[1] == 0 && p[2] == 255) return 'B';
+    if (p[0] == 255 && p[1] == 255 && p[2] == 255) return 'W';
+    if (p[0] == 0 && p[1] == 0 && p[2] == 0) return 'K';
+    return '?';
+}
+
 static void
 gl_px(char *out, size_t n, const uint8_t *p)
 {
@@ -635,7 +648,7 @@ gl_zink_test(void)
 	A01MTLStep = "GL2 ler pixel";
 	ReadPixels(32, 32, 1, 1, A01_GL_RGBA, A01_GL_UNSIGNED_BYTE, px[0]);
 	gl_px(a, sizeof(a), px[0]);
-	snprintf(g_gl2_pixel, sizeof(g_gl2_pixel), "%.8s", a);
+	g_gl2_pixel = gl_colour(px[0]);
 	report("A01 >>> GL2: quad verde %s (00ff00ff) <<<\n", a);
 	g_gl_sum[1] = strcmp(a, "00ff00ff") == 0 ? '+' : '-';
 	g_gl_sum[2] = '?';
@@ -757,7 +770,7 @@ gl_zink_test(void)
 		}
 		gl_px(a, sizeof(a), px[0]); gl_px(b, sizeof(b), px[1]); gl_px(c, sizeof(c), px[2]); gl_px(d, sizeof(d), px[3]);
 		if (tl == 0) {
-			snprintf(g_v3, sizeof(g_v3), "2%s 5%s %s", g_gl2_pixel, a, b);
+			snprintf(g_v3, sizeof(g_v3), "2%c 5%c%c%c%c", g_gl2_pixel, gl_colour(px[0]), gl_colour(px[1]), gl_colour(px[2]), gl_colour(px[3]));
 		}
 		report("A01 >>> %.3s: %s erradas %u/%u, ultimo %s %s %s %s <<<\n", names[tl], bad_rounds ? "ERRO" : "OK",
 		       bad_rounds, rounds, a, b, c, d);

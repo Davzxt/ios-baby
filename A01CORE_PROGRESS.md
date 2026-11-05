@@ -335,3 +335,7 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 
 ## 2026-11-04 - texture pixel diagnostic result
 - User typed P 200FF00FF 500FFFF FFFFFFFF: GL2 pixel appears 00FF00FF (expected green), GL5 second sample FFFFFFFF; the first GL5 group as transcribed is incomplete/ambiguous (00FFFF). Asked user to recheck; do not infer missing digits. No phone rendering fix established.
+
+## 2026-11-04 - graphics presentation investigation
+- A01 uses Zink on GE8100 for GL when available, but the A01 hardware-surface hooks are stubs: the EAGL layer falls back to readback and CPU copies into IOSurfaces. Full GPU-only presentation is not implemented. Host memory import and correct sync/lifetimes are required before replacing this path.
+- Prepared a short GL2/GL5 colour classification line (R/G/B/W/K/?), reporting all four large-texture samples to avoid long ambiguous hexadecimal values. This is diagnosis, not a fix.
