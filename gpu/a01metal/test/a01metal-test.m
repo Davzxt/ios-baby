@@ -40,6 +40,7 @@ static char g_gl_sum[11] = "..........";   /* GL1-GL7, then V1 V2 V3 (a01vktex.c
 void a01_vk_tex_test(void (*emit)(const char *), void (*step)(int), char marks[9]);
 /* V3's first and last pixel, for the kernel status block (the V lines scroll away) */
 static char g_v3[40] = "";
+static char g_gl2_pixel[9] = "--------";
 static char g_v3s[20], g_xs[3], g_ys[3], g_zs[12];
 static void vt_emit(const char *s);
 static void vt_step(int v);
@@ -155,7 +156,7 @@ snapshot(const char *state, int locked)
 	 * only the first ~1 KB); the details follow */
 	if (strncmp(state, "fim OK", 6) == 0) {
 		n += (size_t)snprintf(buf + n, sizeof(buf) - n, "A01METAL: >>> RESULTADO: FUNCIONOU \"GL %s%s%s\" <<<\n", g_gl_sum,
-		                      g_v3[0] ? " V3 " : "", g_v3);
+		                      g_v3[0] ? " P " : "", g_v3);
 	} else if (strncmp(state, "fim", 3) == 0 || strncmp(state, "ERRO", 4) == 0) {
 		/* the first kernel call that answered with an error (a01drm), the most useful clue */
 		void *drm1 = dlopen("/private/var/a01/lib/libdrm.2.dylib", RTLD_NOLOAD | RTLD_LAZY);
@@ -634,6 +635,7 @@ gl_zink_test(void)
 	A01MTLStep = "GL2 ler pixel";
 	ReadPixels(32, 32, 1, 1, A01_GL_RGBA, A01_GL_UNSIGNED_BYTE, px[0]);
 	gl_px(a, sizeof(a), px[0]);
+	snprintf(g_gl2_pixel, sizeof(g_gl2_pixel), "%.8s", a);
 	report("A01 >>> GL2: quad verde %s (00ff00ff) <<<\n", a);
 	g_gl_sum[1] = strcmp(a, "00ff00ff") == 0 ? '+' : '-';
 	g_gl_sum[2] = '?';
@@ -754,6 +756,9 @@ gl_zink_test(void)
 			}
 		}
 		gl_px(a, sizeof(a), px[0]); gl_px(b, sizeof(b), px[1]); gl_px(c, sizeof(c), px[2]); gl_px(d, sizeof(d), px[3]);
+		if (tl == 0) {
+			snprintf(g_v3, sizeof(g_v3), "2%s 5%s %s", g_gl2_pixel, a, b);
+		}
 		report("A01 >>> %.3s: %s erradas %u/%u, ultimo %s %s %s %s <<<\n", names[tl], bad_rounds ? "ERRO" : "OK",
 		       bad_rounds, rounds, a, b, c, d);
 		g_gl_sum[4 + tl] = bad_rounds ? '-' : '+';

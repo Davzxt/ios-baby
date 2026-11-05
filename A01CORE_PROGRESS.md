@@ -323,3 +323,8 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 ## 2026-11-04 - GPU and touch bias trial package
 - XNU run 41907208806 and Vulkan run 41907208900 succeeded for a9384af. XNU workflow guards patches 0343-0346 against being skipped. Metal 41895515754, GL 41609024535 and shim 41338560241 reused.
 - AP_IOS16_BOOT_GPU_DIAG_3CPU_A9384AF.tar.md5 SHA256 5f4f77b9ef9e708abc15983e18a0368a085a0af2773cc31921927c4191136466; Odin MD5 trailer verified and archive contains boot.img only. Not tested on phone.
+
+## 2026-11-04 - device result for a9384af
+- User reports TESTES +-+---+++ V3 2020 6020 2060 Z2020 6020 (nine marks transcribed; do not infer missing mark). Apple logo more recognizable, pixelated and slow; icons and clock absent. User recalls TOQUE S3 IFFFFFFFFFFFFF I3; ID still all ones and touch does not respond.
+- V3 pixel coordinates now within one byte of expected for the three reported points, but this does not establish working texture sampling or GPU composition. Bias-disable trial did not restore touch.
+- Next test proposal: preserve the GL2 pixel and two GL5 512x512 texture pixels in the repeating TESTES line to distinguish a solid-draw failure from incorrect large-texture sampling. No new fix is claimed.
