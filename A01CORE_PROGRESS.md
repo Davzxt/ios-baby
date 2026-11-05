@@ -356,3 +356,6 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 ## 2026-11-04 - device orientation control result
 - User reported P 3BWRG 5BWRG DRB FBWRG. Both texture draws yielded vertically reversed quadrant patterns, untextured orientation control was correct, and reversing texture coordinates in a second GL5 draw did not change its result. This does not identify whether the new draw, vertex data, sampling, or readback is stale.
 - Prepared a black clear/readback check and constant-coordinate texture draw to separate stale output from ignored texture coordinates. Direct GPU-to-IOSurface presentation remains unimplemented.
+
+## 2026-11-04 - constant-coordinate texture diagnosis
+- Metal run 41937178162 succeeded; reused XNU 41907208806, Vulkan 41907208900, GL 41609024535 and shim 41338560241. AP_IOS16_BOOT_GPU_DIAG_3CPU_9748531.tar.md5 SHA256 8db709d0f01783422ec88877b3658a6f0fc292e7bab324489d688ade72d56824; BOOT-only and Odin MD5 verified. Untested. C reports constant texture samples; K reports black clear.
