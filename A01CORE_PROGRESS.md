@@ -347,3 +347,4 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 ## 2026-11-04 - compact texture result
 - User reported P 2G 5BWRG: GL2 green as expected; GL5 actual quadrants blue, white, red, green instead of red, green, blue, white, corresponding to a vertical inversion in the observed pixels. Cause could be texture upload, coordinate orientation, or GL readback.
 - Prepared GL3 small-texture and GL5 large-texture quadrant letters plus a red-bottom/blue-top untextured control drawn after the same context switch. This distinguishes general draw/readback inversion from texture-specific inversion. Direct GPU IOSurface transfer remains unimplemented.
+- Added an isolated GL5 trial that flips texture V coordinates and reports F quadrants alongside the normal draw and untextured direction control. This is a test of a possible correction; it does not modify the iOS interface. Await build and phone result.
