@@ -111,7 +111,8 @@ $CC_IOS $CF -c "$OBJ/gl_stubs.c" -o "$OBJ/gl_stubs.o"
 for f in gl_resolve gl_unimpl osm macro_ctx macro_slots hero_log hero_backboardd hero_prof; do
   $CC_IOS $CF -c "$EAGL/src/$f.c" -o "$OBJ/$f.o"
 done
-$CC_IOS $CF -fno-objc-arc -fobjc-exceptions -DEAGL_INJECT -c "$EAGL/src/eagl.m" -o "$OBJ/eagl.o"
+python3 "$HERE/patch-eagl-flip.py" "$EAGL/src/eagl.m" "$OBJ/eagl-a01.m"
+$CC_IOS $CF -fno-objc-arc -fobjc-exceptions -DEAGL_INJECT -c "$OBJ/eagl-a01.m" -o "$OBJ/eagl.o"
 $CC_IOS -dynamiclib -o "$OUT/lib/libheroeagl.dylib" \
   "$OBJ"/{gl_stubs,gl_resolve,gl_unimpl,osm,macro_ctx,macro_slots,hero_log,hero_backboardd,hero_prof,eagl}.o \
   -install_name "$LIBDIR/libheroeagl.dylib" \
