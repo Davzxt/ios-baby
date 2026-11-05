@@ -319,3 +319,7 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 - User: TOQUE S3 IFFFFFFFFFFFFF I3, V3 2B2B 802B 2B80 Z2020 6020. S3 means ID probe failed; I3 indicates both input-enable bits read as enabled. The displayed ID is all Fs by user report.
 - Z uses the same V3 shader with ALU interpolation coordinates forced to zero: 2020/6020 is within one byte of the expected 2121/6121 at the first two sample points. The coefficient term appears already interpolated for this draw; set zero as a trial default for pixel/centroid/sample varyings, preserving FragCoord and an opt-in for previous behavior. Not yet tested on device or other shapes.
 - Stock A01 Core pinctrl requests bias-disable for GPIO31-34 SPI and GPIO0 IRQ. Patch 0346 clears the corresponding pull enables/resistor bits, preserving unrelated pins. Hardware result unknown; IES enable alone did not restore touch.
+
+## 2026-11-04 - GPU and touch bias trial package
+- XNU run 41907208806 and Vulkan run 41907208900 succeeded for a9384af. XNU workflow guards patches 0343-0346 against being skipped. Metal 41895515754, GL 41609024535 and shim 41338560241 reused.
+- AP_IOS16_BOOT_GPU_DIAG_3CPU_A9384AF.tar.md5 SHA256 5f4f77b9ef9e708abc15983e18a0368a085a0af2773cc31921927c4191136466; Odin MD5 trailer verified and archive contains boot.img only. Not tested on phone.
