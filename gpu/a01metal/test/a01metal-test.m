@@ -41,7 +41,7 @@ void a01_vk_tex_test(void (*emit)(const char *), void (*step)(int), char marks[9
 /* V3's first and last pixel, for the kernel status block (the V lines scroll away) */
 static char g_v3[40] = "";
 static char g_gl2_pixel = '?';
-static char g_gl3_quad[5] = "????", g_gl_dir[3] = "??", g_gl_flip[5] = "????";
+static char g_gl3_quad[5] = "????", g_gl_dir[3] = "??", g_gl_flip[5] = "????", g_gl_const[3] = "??", g_gl_clear = '?';
 static char g_v3s[20], g_xs[3], g_ys[3], g_zs[12];
 static void vt_emit(const char *s);
 static void vt_step(int v);
@@ -780,7 +780,9 @@ gl_zink_test(void)
 				/* Trial correction: flip V only for this separate GL5 draw. */
 				uint8_t fp[4][4];
 				Enable(A01_GL_TEXTURE_2D);
-				ClearColor(0, 0, 0, 1); Clear(A01_GL_COLOR_BUFFER_BIT);
+				ClearColor(0, 0, 0, 1); Clear(A01_GL_COLOR_BUFFER_BIT); Finish();
+				ReadPixels(16, 16, 1, 1, A01_GL_RGBA, A01_GL_UNSIGNED_BYTE, fp[0]);
+				g_gl_clear = gl_colour(fp[0]);
 				Begin(A01_GL_QUADS);
 				TexCoord2f(0, 1); Vertex2f(-1, -1); TexCoord2f(1, 1); Vertex2f(1, -1);
 				TexCoord2f(1, 0); Vertex2f(1, 1); TexCoord2f(0, 0); Vertex2f(-1, 1);
@@ -790,6 +792,15 @@ gl_zink_test(void)
 				ReadPixels(16, 48, 1, 1, A01_GL_RGBA, A01_GL_UNSIGNED_BYTE, fp[2]);
 				ReadPixels(48, 48, 1, 1, A01_GL_RGBA, A01_GL_UNSIGNED_BYTE, fp[3]);
 				snprintf(g_gl_flip, sizeof(g_gl_flip), "%c%c%c%c", gl_colour(fp[0]), gl_colour(fp[1]), gl_colour(fp[2]), gl_colour(fp[3]));
+				/* Constant texture coordinate: both sampled pixels should be red. */
+				Enable(A01_GL_TEXTURE_2D); ClearColor(0, 0, 0, 1); Clear(A01_GL_COLOR_BUFFER_BIT);
+				Begin(A01_GL_QUADS);
+				TexCoord2f(.25f, .25f); Vertex2f(-1, -1); TexCoord2f(.25f, .25f); Vertex2f(1, -1);
+				TexCoord2f(.25f, .25f); Vertex2f(1, 1); TexCoord2f(.25f, .25f); Vertex2f(-1, 1);
+				End(); Finish(); Disable(A01_GL_TEXTURE_2D);
+				ReadPixels(16, 16, 1, 1, A01_GL_RGBA, A01_GL_UNSIGNED_BYTE, fp[0]);
+				ReadPixels(48, 48, 1, 1, A01_GL_RGBA, A01_GL_UNSIGNED_BYTE, fp[1]);
+				snprintf(g_gl_const, sizeof(g_gl_const), "%c%c", gl_colour(fp[0]), gl_colour(fp[1]));
 			}
 			if (DeleteTextures) {
 				DeleteTextures(1, &tx);
@@ -797,7 +808,7 @@ gl_zink_test(void)
 		}
 		gl_px(a, sizeof(a), px[0]); gl_px(b, sizeof(b), px[1]); gl_px(c, sizeof(c), px[2]); gl_px(d, sizeof(d), px[3]);
 		if (tl == 0) {
-			snprintf(g_v3, sizeof(g_v3), "3%s 5%c%c%c%c D%s F%s", g_gl3_quad, gl_colour(px[0]), gl_colour(px[1]), gl_colour(px[2]), gl_colour(px[3]), g_gl_dir, g_gl_flip);
+			snprintf(g_v3, sizeof(g_v3), "3%s 5%c%c%c%c D%s F%s C%s K%c", g_gl3_quad, gl_colour(px[0]), gl_colour(px[1]), gl_colour(px[2]), gl_colour(px[3]), g_gl_dir, g_gl_flip, g_gl_const, g_gl_clear);
 		}
 		report("A01 >>> %.3s: %s erradas %u/%u, ultimo %s %s %s %s <<<\n", names[tl], bad_rounds ? "ERRO" : "OK",
 		       bad_rounds, rounds, a, b, c, d);

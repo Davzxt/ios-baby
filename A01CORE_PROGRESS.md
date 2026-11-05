@@ -352,3 +352,7 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 ## 2026-11-04 - orientation control package
 - Metal run 41935565328 succeeded; reused XNU 41907208806, Vulkan 41907208900, GL 41609024535 and shim 41338560241. AP_IOS16_BOOT_GPU_DIAG_3CPU_9F795FA.tar.md5 SHA256 2673650df6a2f58b903857be967ca6591d9adfd194fabef3fb26257e01da8f83: BOOT-only and Odin MD5 verified. Untested on phone. 3/5/D/F status compares small/large texture, untextured orientation and V-flipped test.
 - Direct GPU-to-IOSurface transfer is not implemented. Existing allocation path uses private GPU PMRs and unsupported DMA-BUF imports; an IOSurface-backed import and Zink resource sharing require separate implementation and validation.
+
+## 2026-11-04 - device orientation control result
+- User reported P 3BWRG 5BWRG DRB FBWRG. Both texture draws yielded vertically reversed quadrant patterns, untextured orientation control was correct, and reversing texture coordinates in a second GL5 draw did not change its result. This does not identify whether the new draw, vertex data, sampling, or readback is stale.
+- Prepared a black clear/readback check and constant-coordinate texture draw to separate stale output from ignored texture coordinates. Direct GPU-to-IOSurface presentation remains unimplemented.
