@@ -1,11 +1,13 @@
 param(
     [switch]$SkipDownload,
     [switch]$NativeMetalSelfTest,
+    [switch]$NativeMetalLean,
     [string]$XnuArtifact = '13271625441',
     [string]$VulkanArtifact = '13280073766',
     [string]$PackageTag = 'DA22EDA'
 )
 $ErrorActionPreference = 'Stop'
+if ($NativeMetalLean -and -not $NativeMetalSelfTest) { throw 'NativeMetalLean requires NativeMetalSelfTest' }
 if (-not $SkipDownload) {
 $env:GIT_TERMINAL_PROMPT = '0'
 $credential = "protocol=https`nhost=github.com`n`n" | git credential fill
@@ -40,6 +42,11 @@ $kernel = Join-Path $dir "$kernelDir/kernel.development.a01core"
 if (-not $kernelHash -or (Get-FileHash -Algorithm SHA256 $kernel).Hash -ne $kernelHash[0]) { throw 'Kernel checksum mismatch' }
 $drop = Join-Path $dir 'a01drop.pkg'
 $items = @("/System/Library/Extensions/A01Metal.bundle/A01Metal=$dir/metal/A01Metal.bundle/A01Metal", "/System/Library/Extensions/A01Metal.bundle/Info.plist=$dir/metal/A01Metal.bundle/Info.plist", "lib/libvulkan_powervr.dylib=$dir/vulkan/libvulkan_powervr.dylib", "lib/libdrm.2.dylib=$dir/vulkan/libdrm.2.dylib", "lib/libA01Metal.dylib=$dir/metal/libA01Metal.dylib", "lib/libOSMesa.8.dylib=$dir/gl/lib/libOSMesa.8.dylib", "lib/libvulkan.1.dylib=$dir/gl/lib/libvulkan.1.dylib", "lib/libheroeagl.dylib=$dir/gl/lib/libheroeagl.dylib", "/private/var/herolte/autorun=$dir/metal/a01metal-test")
+if ($NativeMetalLean) {
+    # Only for a root on which the preceding complete GPU package installed
+    # its libraries successfully. The drop does not remove persisted files.
+    $items = @()
+}
 if ($NativeMetalSelfTest) {
     $bundle = Join-Path $dir 'native-metal-trial/A01NativeMetal.bundle'
     if (-not (Test-Path (Join-Path $bundle 'A01NativeMetal'))) { throw 'NativeMetal plugin missing' }

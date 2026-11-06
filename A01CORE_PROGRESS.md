@@ -433,3 +433,7 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 ### NativeMetal self-test device result - 2026-11-06
 - User reports the self-test package stops at the Samsung logo. No XNU marker or Metal result was reported. The BOOT image is 22,741,008 bytes; expanded kernel/shim image is 68,996,848 bytes, versus 47,240,288 bytes in the earlier working GPU diagnostic. The increase may be relevant but is not a confirmed cause; do not claim the LK size limit is known.
 - NativeMetal self-test and UI remain unverified. Preserve the last previously bootable BOOT package for recovery; no writes performed by the agent.
+
+### Smaller NativeMetal self-test - 2026-11-06
+- Added NativeMetalLean staging: the drop contains the plugin and selftest marker only and relies on GPU and EAGL libraries persisted from the preceding complete, successfully booted GPU package. It does not remove existing root files. The exact retained file state on the phone has not been checked.
+- AP_IOS16_BOOT_GPU_DIAG_3CPU_NATIVE_METAL_LEAN_D92A695.tar.md5: SHA-256 0d61d871e4db569c5335b5e6196dce33ff5c4e7ddb3d20c4413236861bf8fe66; tar contains boot.img only, MD5 verified. Boot image 16416784 bytes; expanded shim image 39478976 bytes, smaller than previously booted 47240288. Untested on the phone. No claim that size caused the prior hang or that the UI/Metal works.
