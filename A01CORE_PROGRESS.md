@@ -388,3 +388,4 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 ### Resultado do diagnÃ³stico B439B9E â€” 2026-11-05
 - UsuÃ¡rio relatou exatamente `P 5BWRG FBWRG URGW DRB KK`. Desenho com UV variÃ¡vel normal e UV invertida produzem `BWRG`, controle sem textura `RB`, limpeza `K`. ApÃ³s `U` foram transcritas trÃªs letras (`RGW`), mas o teste emite quatro; nÃ£o inferir o valor ou posiÃ§Ã£o da letra ausente. A conclusÃ£o sobre os quatro cantos fixos permanece pendente de confirmaÃ§Ã£o.
 - Os resultados nÃ£o comprovam correÃ§Ã£o da interface, nem apontam por si sÃ³ a causa raiz de UVs variadas; sem um valor U completo, nÃ£o se pode afirmar que os quatro pontos fixos funcionaram.
+- UsuÃ¡rio conferiu novamente e confirmou ter lido `URGW`; continuam disponÃ­veis apenas trÃªs caracteres apÃ³s U, sem determinar qual dos quatro estÃ¡ ausente.
