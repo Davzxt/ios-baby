@@ -421,3 +421,7 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 ### NativeMetal discovery and self-test staging - 2026-11-06
 - Kernel run 42229736084 failed because patch 0347 did not apply to the drop installer; corrected context and locally verified the installer hunk against reconstructed 0322/0325/0326 source.
 - Added exact allowlist entries for NativeMetal bundle and selftest marker, and drop-package support for both, including nested bundle directories. Local package generation and reconstructed installer patch check passed. Kernel run 42234107254 is pending. No phone boot or working Metal established; selftest output collection still needs validation.
+
+### NativeMetal kernel and staging - 2026-11-06
+- Kernel run 42234107254 succeeded; downloaded kernel SHA-256 89b2b6695af0f0a0cb75463009b6a66c394de9b8dfaa5ee04ee5cee1bed2ece7 matches its checksum and contains NativeMetal class, bundle and selftest markers.
+- NativeMetal board now attempts to write selftest text to the console; build 42277041289 running. Added optional NativeMetalSelfTest package mode, selecting the checked kernel and staging plugin files and marker, while leaving ordinary mode unchanged. PowerShell syntax checked only; not yet packaged or run on phone. Console permissions, plugin discovery, iOS 16 runtime behavior, GPU presentation and touch remain unverified.
