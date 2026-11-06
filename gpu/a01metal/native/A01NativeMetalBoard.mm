@@ -2,6 +2,8 @@
 // This is an integration scaffold, not a published Metal device.
 #include "NativeMetalBoard.h"
 #include <stdio.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 extern "C" void native_metal_board_prepare(unsigned port)
 {
@@ -18,7 +20,13 @@ extern "C" void native_metal_board_mark(uint32_t value)
 
 extern "C" void native_metal_board_text(const char *line)
 {
-    fprintf(stderr, "A01 NativeMetal: %.63s\n", line ? line : "");
+    char message[112];
+    int n = snprintf(message, sizeof(message), "A01 >>> METAL: %.63s <<<\n", line ? line : "");
+    if (n <= 0) return;
+    size_t len = (size_t)n < sizeof(message) ? (size_t)n : sizeof(message) - 1;
+    fprintf(stderr, "%s", message);
+    int fd = open("/dev/console", O_WRONLY | O_NONBLOCK);
+    if (fd >= 0) { (void)write(fd, message, len); close(fd); }
 }
 
 extern "C" bool native_metal_board_scanout(gpuscanout::Transport *transport)
