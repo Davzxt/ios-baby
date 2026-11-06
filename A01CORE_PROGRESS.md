@@ -406,3 +406,7 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 ### Device result for GPU_3571F2C - 2026-11-05
 - User reports no observable improvement in the interface with the component-offset fix. Build success did not establish a UI fix. No new diagnostic values were provided.
 - Full GPU UI composition remains broken; direct GPU/IOSurface presentation is unimplemented. Do not deliver another build as a confirmed correction without device evidence. The user explicitly rejects CPU rendering as a substitute.
+
+### NativeMetal integration started - 2026-11-05
+- Retrieved the NativeMetal reference and corrected the revision to the UniXNU-pinned 23dcaf08a92f106b40489f357eeeed203cd5fb29; its default branch lacks NativeVulkanMetalPlugin.mm.
+- Added gpu/a01metal/native board hooks and integration requirements. Hooks log progress and explicitly decline unsupported GPU scanout. They are not built or installed; matching Rust bridge, iOS 16 ABI validation, accelerator discovery, host-memory import and display integration remain outstanding. No new functional package produced.
