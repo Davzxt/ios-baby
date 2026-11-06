@@ -425,3 +425,7 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 ### NativeMetal kernel and staging - 2026-11-06
 - Kernel run 42234107254 succeeded; downloaded kernel SHA-256 89b2b6695af0f0a0cb75463009b6a66c394de9b8dfaa5ee04ee5cee1bed2ece7 matches its checksum and contains NativeMetal class, bundle and selftest markers.
 - NativeMetal board now attempts to write selftest text to the console; build 42277041289 running. Added optional NativeMetalSelfTest package mode, selecting the checked kernel and staging plugin files and marker, while leaving ordinary mode unchanged. PowerShell syntax checked only; not yet packaged or run on phone. Console permissions, plugin discovery, iOS 16 runtime behavior, GPU presentation and touch remain unverified.
+
+### NativeMetal self-test boot package - 2026-11-06
+- NativeMetal console build 42277041289 succeeded, artifact 13535175803; compiled plugin contains A01 >>> METAL marker. Kernel run 42234107254 checksum and NativeMetal strings verified.
+- Generated AP_IOS16_BOOT_GPU_DIAG_3CPU_NATIVE_METAL_SELFTEST_D92A695.tar.md5, SHA-256 bfb0edea73ec45dd99b5e601f086c7c7ec2fac96043804e9e81bf594f97a13ae. TAR contains only boot.img; Odin MD5 correct, boot 22741008 bytes (<32 MiB), payload selects a01metal=2 and Zink. This is selftest only: no Metal device publication or GPU scanout. Not booted on device; 69 MB expanded payload has not been tested on the bootloader, and console access/discovery/Metal runtime remain unverified.
