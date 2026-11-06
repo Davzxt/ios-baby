@@ -1,0 +1,49 @@
+name: a01-native-metal-build-trial
+on:
+  workflow_dispatch:
+  push:
+    branches: [a01core]
+    paths: ['gpu/a01metal/native/**', '.github/workflows/a01-native-metal.yml']
+jobs:
+  build:
+    runs-on: macos-15-intel
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch pinned sources
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git clone https://github.com/mouseos/UniXNU.git "$RUNNER_TEMP/unixnu"
+          cd "$RUNNER_TEMP/unixnu"
+          git checkout 61451aeda4195a1fe5d236c5c172cd7ba9ea626a
+          git submodule update --init drivers/NativeMetal drivers/NativeMobileDisplay
+          mkdir -p .cache/gpu-reference
+          git clone https://github.com/steelbrain/metal2vulkan .cache/gpu-reference/metal2vulkan
+          git -C .cache/gpu-reference/metal2vulkan checkout 720ef1ce9ae2a2068999a8675717418b9416283e
+          python3 "$GITHUB_WORKSPACE/gpu/a01metal/native/prepare_ios16.py" "$PWD"
+      - name: Install compiler dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          brew install llvm
+          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
+          rustup toolchain install 1.98.0 --profile minimal --target aarch64-apple-ios
+          rustup default 1.98.0
+      - name: Download existing Vulkan loader
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download 42110542297 --repo "$GITHUB_REPOSITORY" --name a01gl --dir "$RUNNER_TEMP/gl"
+      - name: Build experimental plugin
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd "$RUNNER_TEMP/unixnu"
+          python3 scripts/build-vulkan-metal-plugin.py --name A01NativeMetal --principal-class A01NativeMetalDevice --vulkan-driver "$RUNNER_TEMP/gl/lib/libvulkan.1.dylib" --board-source "$GITHUB_WORKSPACE/gpu/a01metal/native/A01NativeMetalBoard.mm" --portable-sha2 --out "$RUNNER_TEMP/native-metal-result"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: a01-native-metal-build-trial
+          path: ${{ runner.temp }}/native-metal-result/
