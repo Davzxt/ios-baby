@@ -377,3 +377,7 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 ### Resultado do pacote E5367EC — 2026-11-05
 - Usuário relata interface igual à anterior; a inversão experimental das linhas de IOSurface não apresentou melhora observável. Não sabemos se a condição de execução foi ativada ou se a hipótese estava errada. Nenhum resultado novo foi informado para toque.
 - Removido o experimento de inversão das futuras compilações, pois não demonstrou benefício e poderia inverter conteúdo correto. A correção real de texturas, o toque e a apresentação direta por GPU continuam pendentes. Não há pacote validado como 100% funcional.
+
+### DiagnÃ³stico de textura GL8 â€” 2026-11-05
+- Preparado teste de quatro desenhos independentes com UVs constantes nos centros dos quatro quadrantes da textura 512x512, lidos no centro da tela: ordem esperada `RGBW`. A linha resumida apresenta `5` (UV variÃ¡vel normal), `F` (UV variÃ¡vel invertida), `U` (quatro UVs constantes), `D` (controle sem textura) e `K` (limpeza); o resultado sÃ³ tem valor apÃ³s execuÃ§Ã£o no telefone.
+- O teste pode diferenciar problemas de acesso amostrado aos quadrantes de falhas no caminho com UVs variÃ¡veis; nÃ£o determina sozinho a causa raiz nem comprova o funcionamento do compositor, apresentaÃ§Ã£o direta ou toque.

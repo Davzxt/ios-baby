@@ -43,6 +43,7 @@ static char g_v3[40] = "";
 static char g_gl2_pixel = '?';
 static char g_gl3_quad[5] = "????", g_gl_dir[3] = "??", g_gl_flip[5] = "????", g_gl_const[3] = "??", g_gl_clear = '?';
 static char g_v3s[20], g_xs[3], g_ys[3], g_zs[12];
+static char g_gl_const4[5] = "????";
 static void vt_emit(const char *s);
 static void vt_step(int v);
 static size_t g_len;
@@ -801,6 +802,22 @@ gl_zink_test(void)
 				ReadPixels(16, 16, 1, 1, A01_GL_RGBA, A01_GL_UNSIGNED_BYTE, fp[0]);
 				ReadPixels(48, 48, 1, 1, A01_GL_RGBA, A01_GL_UNSIGNED_BYTE, fp[1]);
 				snprintf(g_gl_const, sizeof(g_gl_const), "%c%c", gl_colour(fp[0]), gl_colour(fp[1]));
+				/* Four separately drawn constant coordinates: isolate texture upload and
+				 * sampler addressing from the interpolation of per-vertex UVs. */
+				for (unsigned k = 0; k < 4; k++) {
+					float u = (k & 1) ? .75f : .25f;
+					float v = (k & 2) ? .75f : .25f;
+					Enable(A01_GL_TEXTURE_2D);
+					ClearColor(0, 0, 0, 1); Clear(A01_GL_COLOR_BUFFER_BIT);
+					Begin(A01_GL_QUADS);
+					TexCoord2f(u, v); Vertex2f(-1, -1); TexCoord2f(u, v); Vertex2f(1, -1);
+					TexCoord2f(u, v); Vertex2f(1, 1); TexCoord2f(u, v); Vertex2f(-1, 1);
+					End(); Finish(); Disable(A01_GL_TEXTURE_2D);
+					ReadPixels(32, 32, 1, 1, A01_GL_RGBA, A01_GL_UNSIGNED_BYTE, fp[0]);
+					g_gl_const4[k] = gl_colour(fp[0]);
+				}
+				report("A01 >>> GL8: UV fixas %s (esperado RGBW), V invertido %s, limpa %c <<<\n",
+				       g_gl_const4, g_gl_flip, g_gl_clear);
 			}
 			if (DeleteTextures) {
 				DeleteTextures(1, &tx);
@@ -808,7 +825,7 @@ gl_zink_test(void)
 		}
 		gl_px(a, sizeof(a), px[0]); gl_px(b, sizeof(b), px[1]); gl_px(c, sizeof(c), px[2]); gl_px(d, sizeof(d), px[3]);
 		if (tl == 0) {
-			snprintf(g_v3, sizeof(g_v3), "3%s 5%c%c%c%c D%s F%s C%s K%c", g_gl3_quad, gl_colour(px[0]), gl_colour(px[1]), gl_colour(px[2]), gl_colour(px[3]), g_gl_dir, g_gl_flip, g_gl_const, g_gl_clear);
+			snprintf(g_v3, sizeof(g_v3), "5%c%c%c%c F%s U%s D%s K%c", gl_colour(px[0]), gl_colour(px[1]), gl_colour(px[2]), gl_colour(px[3]), g_gl_flip, g_gl_const4, g_gl_dir, g_gl_clear);
 		}
 		report("A01 >>> %.3s: %s erradas %u/%u, ultimo %s %s %s %s <<<\n", names[tl], bad_rounds ? "ERRO" : "OK",
 		       bad_rounds, rounds, a, b, c, d);
