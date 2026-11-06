@@ -398,3 +398,7 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 - https://github.com/mouseos/UniXNU-a04br3 provides NativePowerVR host import, Mesa Darwin winsys, Metal bridge and GPU test sources for a different MT8167/GE8300 (22.40.54.30). Its README reports successful bounded GPU rendering tests while stating that full UI composition still needs validation. The backend and hardware differ from the A01Core DDK 1.11, so these are references, not a drop-in fix.
 - https://github.com/joranv1/ios-sailfish documents GPU iOS UI composition on Adreno 530. Its presentation architecture may inform later work but its GPU driver is not for PowerVR.
 - https://docs.mesa3d.org/drivers/powervr.html lists GE8300 as unsupported and stresses BVNC-specific differences. This is not evidence that its tested workarounds apply to 22.49.21.16 GE8100.
+
+### GPU component-fix package - 2026-11-05
+- Vulkan build 42118719230 succeeded from 3571f2c, artifact 13457639897. The rebuilt Vulkan library differs from the previous artifact; SHA-256 e1cb5942d10f2e70b6c1ffe80263f2f840a9a7816a297491be86d67766864787.
+- Built `AP_IOS16_BOOT_GPU_DIAG_3CPU_GPU_3571F2C.tar.md5` SHA-256 836c69358f6bf4f3fa6a143931cbc965a1e9a262069d4f78a4a373ec8a0b9562. TAR contains boot.img only, Odin MD5 verified, payload selects `a01gl=zink`. Not yet tested on the phone; no claim of fixed UI, direct GPU transfer, or working touch.
