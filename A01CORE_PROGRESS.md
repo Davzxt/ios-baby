@@ -384,3 +384,7 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 
 - Build Metal 42115314918 concluÃ­do com sucesso, artefato 13456675476; GL 42110542297, artefato 13454846368, sem inversÃ£o experimental. O executÃ¡vel compilado contÃ©m `GL8: UV fixas`.
 - Pacote local `AP_IOS16_BOOT_GPU_DIAG_3CPU_DIAG_B439B9E.tar.md5`, SHA-256 `6e9554511477b14cb2cc9547a21510ebb5c891756332752b7242b2dc4f275a27`. TAR contÃ©m apenas boot.img e MD5 do trailer validado. NÃ£o testado no telefone.
+
+### Resultado do diagnÃ³stico B439B9E â€” 2026-11-05
+- UsuÃ¡rio relatou exatamente `P 5BWRG FBWRG URGW DRB KK`. Desenho com UV variÃ¡vel normal e UV invertida produzem `BWRG`, controle sem textura `RB`, limpeza `K`. ApÃ³s `U` foram transcritas trÃªs letras (`RGW`), mas o teste emite quatro; nÃ£o inferir o valor ou posiÃ§Ã£o da letra ausente. A conclusÃ£o sobre os quatro cantos fixos permanece pendente de confirmaÃ§Ã£o.
+- Os resultados nÃ£o comprovam correÃ§Ã£o da interface, nem apontam por si sÃ³ a causa raiz de UVs variadas; sem um valor U completo, nÃ£o se pode afirmar que os quatro pontos fixos funcionaram.
