@@ -402,3 +402,7 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 ### GPU component-fix package - 2026-11-05
 - Vulkan build 42118719230 succeeded from 3571f2c, artifact 13457639897. The rebuilt Vulkan library differs from the previous artifact; SHA-256 e1cb5942d10f2e70b6c1ffe80263f2f840a9a7816a297491be86d67766864787.
 - Built `AP_IOS16_BOOT_GPU_DIAG_3CPU_GPU_3571F2C.tar.md5` SHA-256 836c69358f6bf4f3fa6a143931cbc965a1e9a262069d4f78a4a373ec8a0b9562. TAR contains boot.img only, Odin MD5 verified, payload selects `a01gl=zink`. Not yet tested on the phone; no claim of fixed UI, direct GPU transfer, or working touch.
+
+### Device result for GPU_3571F2C - 2026-11-05
+- User reports no observable improvement in the interface with the component-offset fix. Build success did not establish a UI fix. No new diagnostic values were provided.
+- Full GPU UI composition remains broken; direct GPU/IOSurface presentation is unimplemented. Do not deliver another build as a confirmed correction without device evidence. The user explicitly rejects CPU rendering as a substitute.
