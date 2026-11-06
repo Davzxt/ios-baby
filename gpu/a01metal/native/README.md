@@ -9,6 +9,12 @@ mouseos/UniXNU when inspected on 2026-11-05. The repository's default branch
 at `c6d29caad6d880cc8204ebe3bc34d77479a3255d` lacks the required generic
 NativeVulkanMetalPlugin.mm. Do not build against an unpinned default branch.
 
+The inspected UniXNU builder is `61451aeda4195a1fe5d236c5c172cd7ba9ea626a`;
+its metal2vulkan input is `720ef1ce9ae2a2068999a8675717418b9416283e`.
+`prepare_ios16.py` adjusts a disposable copy of that builder's plugin and Rust
+deployment targets to 16.0, with exact-match guards. It has been syntax-checked
+on copies; no iOS build or runtime compatibility has been verified.
+
 The adapter implements the four NativeMetalBoard.h entry points. It does not
 borrow the GE8300 board's IOKit service ABI, memory import or display transport.
 Configure the generic plugin's NATIVE_METAL_VULKAN_DRIVER with the existing

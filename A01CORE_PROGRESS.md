@@ -410,3 +410,6 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 ### NativeMetal integration started - 2026-11-05
 - Retrieved the NativeMetal reference and corrected the revision to the UniXNU-pinned 23dcaf08a92f106b40489f357eeeed203cd5fb29; its default branch lacks NativeVulkanMetalPlugin.mm.
 - Added gpu/a01metal/native board hooks and integration requirements. Hooks log progress and explicitly decline unsupported GPU scanout. They are not built or installed; matching Rust bridge, iOS 16 ABI validation, accelerator discovery, host-memory import and display integration remain outstanding. No new functional package produced.
+
+### NativeMetal iOS 16 build preparation - 2026-11-06
+- Pinned inspected UniXNU builder 61451aeda4195a1fe5d236c5c172cd7ba9ea626a and translator 720ef1ce9ae2a2068999a8675717418b9416283e. Added guarded script to adjust plugin and Rust deployment targets from iOS 17 to iOS 16 on a disposable checkout. Applied to copies and Python syntax checks passed; actual iOS build and runtime compatibility are unverified.
