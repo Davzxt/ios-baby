@@ -27,12 +27,13 @@ diff --git a/bsd/dev/a01core_drop.c b/bsd/dev/a01core_drop.c
  /* the iOS root (tools/herolte-tune-ios-root.sh) registers com.herolte.autorun in launchd.plist:
   * it runs this program once per boot, output in /private/var/herolte/autorun.out */
  #define ADROP_AUTORUN   "/private/var/herolte/autorun"
-@@ -202,6 +203,8 @@ adrop_install(void)
+@@ -202,6 +203,9 @@ adrop_install(void)
  		bool allowed = (strncmp(path, ADROP_PREFIX, strlen(ADROP_PREFIX)) == 0 && !adrop_has_dotdot(path)) ||
  		    strcmp(path, ADROP_PLIST) == 0 || strcmp(path, ADROP_BUNDLE) == 0 ||
  		    strcmp(path, "/private/var/herolte") == 0 || strcmp(path, ADROP_AUTORUN) == 0 ||
 +		    strcmp(path, ADROP_NATIVE_BUNDLE) == 0 ||
 +		    (strncmp(path, ADROP_NATIVE_BUNDLE "/", strlen(ADROP_NATIVE_BUNDLE) + 1) == 0 && !adrop_has_dotdot(path)) ||
++		    strcmp(path, "/System/Library/Extensions/A01NativeMetal.selftest") == 0 ||
  		    (strncmp(path, ADROP_BUNDLE "/", strlen(ADROP_BUNDLE) + 1) == 0 && !adrop_has_dotdot(path));
  		if (!allowed) {
  			error = EPERM;
