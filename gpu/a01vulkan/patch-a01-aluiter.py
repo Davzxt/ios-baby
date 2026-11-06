@@ -117,5 +117,16 @@ rep("""   /* Skip cases that don't need handling. */
 """)
 if "#include <stdlib.h>" not in t:
     t = "#include <stdlib.h>\n" + t
+rep("""      comps[u] = alu_iter(b, coords, u, nir_intrinsic_io_semantics(intr));
+""", """      unsigned a01_component = u;
+#if defined(__APPLE__)
+      /* The input may start at a nonzero component. Our A01 path lowers
+       * ordinary interpolated inputs too; unlike the original hardware path,
+       * using u alone loses their component offset and reads another lane. */
+      if (a01_alu)
+         a01_component += nir_intrinsic_component(intr);
+#endif
+      comps[u] = alu_iter(b, coords, a01_component, nir_intrinsic_io_semantics(intr));
+""")
 f.write_text(t, newline="\n")
 print("pco_nir_pvfio.c: interpolated inputs by ALU on Darwin")
