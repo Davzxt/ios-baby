@@ -417,3 +417,7 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 ### NativeMetal iOS 16 build trial - 2026-11-06
 - GitHub Actions 42226929367 succeeded, artifact 13507320468. A01NativeMetal.bundle and Rust bridge compiled targeting iOS 16. This establishes build only, not discovery, runtime, shader execution or GPU presentation.
 - Added patch 0347 to opt into NativeMetal discovery with a01metal=2 and permit its bundle in the drop installer. Patch syntax checked; actual application, kernel build and device behavior remain unverified. GPU scanout and IOSurface import remain unavailable.
+
+### NativeMetal discovery and self-test staging - 2026-11-06
+- Kernel run 42229736084 failed because patch 0347 did not apply to the drop installer; corrected context and locally verified the installer hunk against reconstructed 0322/0325/0326 source.
+- Added exact allowlist entries for NativeMetal bundle and selftest marker, and drop-package support for both, including nested bundle directories. Local package generation and reconstructed installer patch check passed. Kernel run 42234107254 is pending. No phone boot or working Metal established; selftest output collection still needs validation.
