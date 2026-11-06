@@ -429,3 +429,7 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 ### NativeMetal self-test boot package - 2026-11-06
 - NativeMetal console build 42277041289 succeeded, artifact 13535175803; compiled plugin contains A01 >>> METAL marker. Kernel run 42234107254 checksum and NativeMetal strings verified.
 - Generated AP_IOS16_BOOT_GPU_DIAG_3CPU_NATIVE_METAL_SELFTEST_D92A695.tar.md5, SHA-256 bfb0edea73ec45dd99b5e601f086c7c7ec2fac96043804e9e81bf594f97a13ae. TAR contains only boot.img; Odin MD5 correct, boot 22741008 bytes (<32 MiB), payload selects a01metal=2 and Zink. This is selftest only: no Metal device publication or GPU scanout. Not booted on device; 69 MB expanded payload has not been tested on the bootloader, and console access/discovery/Metal runtime remain unverified.
+
+### NativeMetal self-test device result - 2026-11-06
+- User reports the self-test package stops at the Samsung logo. No XNU marker or Metal result was reported. The BOOT image is 22,741,008 bytes; expanded kernel/shim image is 68,996,848 bytes, versus 47,240,288 bytes in the earlier working GPU diagnostic. The increase may be relevant but is not a confirmed cause; do not claim the LK size limit is known.
+- NativeMetal self-test and UI remain unverified. Preserve the last previously bootable BOOT package for recovery; no writes performed by the agent.
