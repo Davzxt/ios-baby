@@ -393,3 +393,8 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 ### GPU interpolation component fix - 2026-11-05
 - The A01-specific ALU lowering of ordinary `load_interpolated_input` used `u` as the coefficient component and ignored `nir_intrinsic_component(intr)`. The original hardware interpolation in `trans_load_input_fs` uses the input component; `trans_load_fs_coeffs` also indexes by component. For a nonzero input component, the A01 path selected a different lane.
 - Changed the ordinary A01 ALU path to select `u + nir_intrinsic_component(intr)` while preserving the pre-existing non-A01/at-offset behavior. Applied locally to the pinned original PCO source and inspected the generated C; build and phone testing pending. The device's reported result does not prove that this bug caused the missing UI; texture reversal may have additional causes. GPU presentation and touch remain unresolved.
+
+### Related GPU projects - 2026-11-05
+- https://github.com/mouseos/UniXNU-a04br3 provides NativePowerVR host import, Mesa Darwin winsys, Metal bridge and GPU test sources for a different MT8167/GE8300 (22.40.54.30). Its README reports successful bounded GPU rendering tests while stating that full UI composition still needs validation. The backend and hardware differ from the A01Core DDK 1.11, so these are references, not a drop-in fix.
+- https://github.com/joranv1/ios-sailfish documents GPU iOS UI composition on Adreno 530. Its presentation architecture may inform later work but its GPU driver is not for PowerVR.
+- https://docs.mesa3d.org/drivers/powervr.html lists GE8300 as unsupported and stresses BVNC-specific differences. This is not evidence that its tested workarounds apply to 22.49.21.16 GE8100.
