@@ -1,0 +1,33 @@
+diff --git a/iokit/Kernel/arm/A01CoreGPU.cpp b/iokit/Kernel/arm/A01CoreGPU.cpp
+--- a/iokit/Kernel/arm/A01CoreGPU.cpp
++++ b/iokit/Kernel/arm/A01CoreGPU.cpp
+@@ -164,10 +164,10 @@ a01_publish_metal(IOService *gpu)
+ 	IOAcceleratorES *es = OSTypeAlloc(IOAcceleratorES);
+ 	if (es != NULL && es->init() && es->attach(gpu)) {
+-		es->setProperty("MetalPluginName", "A01Metal");
+-		es->setProperty("MetalPluginClassName", "A01MTLDevice");
++		es->setProperty("MetalPluginName", on == 2 ? "A01NativeMetal" : "A01Metal");
++		es->setProperty("MetalPluginClassName", on == 2 ? "A01NativeMetalDevice" : "A01MTLDevice");
+ 		es->setProperty(kIOUserClientClassKey, "A01CoreGPUUserClient");
+ 		es->registerService();
+-		IOLog("A01CORE PVR: IOAcceleratorES published (MetalPluginName A01Metal, class A01MTLDevice)\n");
++		IOLog("A01CORE PVR: IOAcceleratorES published (a01metal=%d)\n", on);
+ 	}
+ 	OSSafeReleaseNULL(es);
+ }
+diff --git a/bsd/dev/a01core_drop.c b/bsd/dev/a01core_drop.c
+--- a/bsd/dev/a01core_drop.c
++++ b/bsd/dev/a01core_drop.c
+@@ -41,4 +41,5 @@ void a01core_drop_apply(void);
+ #define ADROP_DATA      4096u
+ #define ADROP_PREFIX    "/private/var/a01/"
+ #define ADROP_PLIST     "/System/Library/LaunchDaemons/com.a01core.autorun.plist"
+ #define ADROP_BUNDLE    "/System/Library/Extensions/A01Metal.bundle"   /* the Metal plugin */
++#define ADROP_NATIVE_BUNDLE "/System/Library/Extensions/A01NativeMetal.bundle"
+@@ -202,4 +203,6 @@ adrop_install(void)
+ 		bool allowed = (strncmp(path, ADROP_PREFIX, strlen(ADROP_PREFIX)) == 0 && !adrop_has_dotdot(path)) ||
+ 		    strcmp(path, ADROP_PLIST) == 0 || strcmp(path, ADROP_BUNDLE) == 0 ||
+ 		    strcmp(path, ADROP_AUTORUN) == 0 ||
++		    strcmp(path, ADROP_NATIVE_BUNDLE) == 0 ||
++		    (strncmp(path, ADROP_NATIVE_BUNDLE "/", strlen(ADROP_NATIVE_BUNDLE) + 1) == 0 && !adrop_has_dotdot(path)) ||
+ 		    (strncmp(path, ADROP_BUNDLE "/", strlen(ADROP_BUNDLE) + 1) == 0 && !adrop_has_dotdot(path));

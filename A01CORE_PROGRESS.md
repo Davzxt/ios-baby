@@ -413,3 +413,7 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 
 ### NativeMetal iOS 16 build preparation - 2026-11-06
 - Pinned inspected UniXNU builder 61451aeda4195a1fe5d236c5c172cd7ba9ea626a and translator 720ef1ce9ae2a2068999a8675717418b9416283e. Added guarded script to adjust plugin and Rust deployment targets from iOS 17 to iOS 16 on a disposable checkout. Applied to copies and Python syntax checks passed; actual iOS build and runtime compatibility are unverified.
+
+### NativeMetal iOS 16 build trial - 2026-11-06
+- GitHub Actions 42226929367 succeeded, artifact 13507320468. A01NativeMetal.bundle and Rust bridge compiled targeting iOS 16. This establishes build only, not discovery, runtime, shader execution or GPU presentation.
+- Added patch 0347 to opt into NativeMetal discovery with a01metal=2 and permit its bundle in the drop installer. Patch syntax checked; actual application, kernel build and device behavior remain unverified. GPU scanout and IOSurface import remain unavailable.
