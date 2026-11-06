@@ -381,3 +381,6 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 ### DiagnÃ³stico de textura GL8 â€” 2026-11-05
 - Preparado teste de quatro desenhos independentes com UVs constantes nos centros dos quatro quadrantes da textura 512x512, lidos no centro da tela: ordem esperada `RGBW`. A linha resumida apresenta `5` (UV variÃ¡vel normal), `F` (UV variÃ¡vel invertida), `U` (quatro UVs constantes), `D` (controle sem textura) e `K` (limpeza); o resultado sÃ³ tem valor apÃ³s execuÃ§Ã£o no telefone.
 - O teste pode diferenciar problemas de acesso amostrado aos quadrantes de falhas no caminho com UVs variÃ¡veis; nÃ£o determina sozinho a causa raiz nem comprova o funcionamento do compositor, apresentaÃ§Ã£o direta ou toque.
+
+- Build Metal 42115314918 concluÃ­do com sucesso, artefato 13456675476; GL 42110542297, artefato 13454846368, sem inversÃ£o experimental. O executÃ¡vel compilado contÃ©m `GL8: UV fixas`.
+- Pacote local `AP_IOS16_BOOT_GPU_DIAG_3CPU_DIAG_B439B9E.tar.md5`, SHA-256 `6e9554511477b14cb2cc9547a21510ebb5c891756332752b7242b2dc4f275a27`. TAR contÃ©m apenas boot.img e MD5 do trailer validado. NÃ£o testado no telefone.
