@@ -7,6 +7,7 @@
  */
 #include "xnu_kpi.h"
 #include "a01gpu_buf.h"
+#include "a01gpu_host.h"
 #include "img_defs.h"
 #include "img_types.h"
 #include "pvrsrv_error.h"
@@ -132,6 +133,70 @@ static const PMR_IMPL_FUNCTAB g_sA01PMRFuncTab = {
 	.pfnMMap = PMRMMap,
 	.pfnFinalize = PMRFinalize,
 };
+
+/* Host-backed PMR foundation. No bridge exposes this yet. The caller must
+ * transfer one pinned-host reference on success, and retain ownership on
+ * failure. Cache visibility and GPU/CPU ownership synchronization are not yet
+ * implemented, so this PMR must not be submitted to the device. */
+static PVRSRV_ERROR
+A01HostDevPhysAddr(PMR_IMPL_PRIVDATA p, IMG_UINT32 log2_page, IMG_UINT32 n,
+    IMG_DEVMEM_OFFSET_T *offsets, IMG_BOOL *valid, IMG_DEV_PHYADDR *addresses)
+{
+	a01gpu_host *host = p;
+	(void)log2_page;
+	for (IMG_UINT32 i = 0; i < n; i++) {
+		if (!valid[i]) continue;
+		if (offsets[i] >= a01gpu_host_size(host)) return PVRSRV_ERROR_INVALID_PARAMS;
+		IMG_UINT64 phys = a01gpu_host_phys(host, offsets[i]);
+		if (!phys || phys >= 0x100000000ULL) return PVRSRV_ERROR_INVALID_PARAMS;
+		addresses[i].uiAddr = phys;
+	}
+	return PVRSRV_OK;
+}
+
+static PVRSRV_ERROR
+A01HostAcquireKernelMapping(PMR_IMPL_PRIVDATA p, size_t offset, size_t size,
+    void **out, IMG_HANDLE *handle, PMR_FLAGS_T flags)
+{
+	a01gpu_host *host = p;
+	IMG_UINT64 length = a01gpu_host_size(host);
+	(void)flags;
+	if (offset > length || size > length - offset || !a01gpu_host_kva(host))
+		return PVRSRV_ERROR_PMR_BAD_MAPPINGTABLE_SIZE;
+	*out = (IMG_UINT8 *)a01gpu_host_kva(host) + offset;
+	*handle = NULL;
+	return PVRSRV_OK;
+}
+
+static PVRSRV_ERROR
+A01HostFinalize(PMR_IMPL_PRIVDATA p)
+{
+	a01gpu_host_unpin(p);
+	return PVRSRV_OK;
+}
+
+static const PMR_IMPL_FUNCTAB g_sA01HostPMRFuncTab = {
+	.pfnLockPhysAddresses = PMRLock,
+	.pfnUnlockPhysAddresses = PMRUnlock,
+	.pfnDevPhysAddr = A01HostDevPhysAddr,
+	.pfnAcquireKernelMappingData = A01HostAcquireKernelMapping,
+	.pfnReleaseKernelMappingData = PMRReleaseKernelMapping,
+	.pfnFinalize = A01HostFinalize,
+};
+
+PVRSRV_ERROR
+a01pvr_create_host_pmr(PVRSRV_DEVICE_NODE *device, a01gpu_host *host,
+    PVRSRV_MEMALLOCFLAGS_T flags, PMR **out)
+{
+	if (!device || !host || !out) return PVRSRV_ERROR_INVALID_PARAMS;
+	IMG_UINT64 size = a01gpu_host_size(host);
+	if (!size || (size & 0x3fffULL)) return PVRSRV_ERROR_INVALID_PARAMS;
+	IMG_UINT32 map = 0;
+	PMR_FLAGS_T pmr_flags = (PMR_FLAGS_T)(flags & PVRSRV_MEMALLOCFLAGS_PMRFLAGSMASK);
+	return PMRCreatePMR(device, device->apsPhysHeap[PVRSRV_DEVICE_PHYS_HEAP_CPU_LOCAL],
+	    size, size, 1, 1, &map, 12, pmr_flags, "A01 host import (disabled)",
+	    &g_sA01HostPMRFuncTab, host, PMR_TYPE_OSMEM, out, 0);
+}
 
 PVRSRV_ERROR
 PhysmemNewOSRamBackedPMR(PVRSRV_DEVICE_NODE *psDevNode, IMG_DEVMEM_SIZE_T uiSize,

@@ -454,3 +454,6 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 ### Host-page pin foundation - 2026-11-06
 - Added an unexposed XNU helper to pin a current-task, 16 KiB-aligned host range with a persistent descriptor, verify each 4 KiB physical page is aligned, present and below the GE8100 4 GiB bus limit, and release mapping and descriptor on failure/finalization. Range size is bounded to 128 MiB. No user-client selector calls this helper, and it does not enable GPU use or host-memory import.
 - Added C declarations and CI guard for patch 0348. Patch syntax and application to a reconstruction of the original A01CoreGPU source passed; actual XNU compilation, cache synchronization, PMR integration, handle lifetime and Vulkan external-memory import are pending.
+
+### Host-backed PowerVR PMR foundation - 2026-11-06
+- Added an unexposed host-backed PMR factory to physmem_xnu.c. It translates validated host offsets into device physical addresses, bounds kernel mappings, and transfers pinned descriptor ownership to PMR finalization on success. No bridge or Vulkan capability calls it: cache maintenance, CPU/GPU synchronization, kernel build and device validation remain outstanding. A successful pin alone must not be interpreted as safe GPU use.
