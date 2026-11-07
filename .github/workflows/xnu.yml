@@ -148,6 +148,10 @@ jobs:
             echo 'Required A01CORE NativeMetal discovery patch was skipped' >&2
             exit 1
           fi
+          if grep -E 'Skipping patch .*0348-a01core-host-page-pin\.patch' ../build.log; then
+            echo 'Required A01CORE host page pin patch was skipped' >&2
+            exit 1
+          fi
           ccache -s || true
 
       # Logs need a GitHub sign-in to read; check-run annotations are public.

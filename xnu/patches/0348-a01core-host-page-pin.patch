@@ -1,0 +1,85 @@
+diff --git a/iokit/Kernel/arm/A01CoreGPU.cpp b/iokit/Kernel/arm/A01CoreGPU.cpp
+--- a/iokit/Kernel/arm/A01CoreGPU.cpp
++++ b/iokit/Kernel/arm/A01CoreGPU.cpp
+@@ -24,6 +24,81 @@
+ #include <IOKit/IOBufferMemoryDescriptor.h>
+ #include <kern/task.h>
+ 
++/* Foundation for importing caller memory. No user-client selector exposes
++ * this yet: PMR ownership, cache synchronization and Vulkan integration must
++ * be implemented and validated before it can be used for GPU submission. */
++struct a01gpu_host {
++	IOMemoryDescriptor *md;
++	IOMemoryMap *map;
++	uint64_t size;
++};
++
++extern "C" void a01gpu_host_unpin(struct a01gpu_host *host);
++
++extern "C" struct a01gpu_host *
++a01gpu_host_pin(uint64_t address, uint64_t length)
++{
++	/* XNU uses 16 KiB pages; the GPU consumes 4 KiB pages. */
++	const uint64_t cpu_page = 0x4000ULL, gpu_page = 0x1000ULL;
++	if (!address || !length || (address & (cpu_page - 1)) ||
++	    (length & (cpu_page - 1)) || length > 0x08000000ULL ||
++	    address + length < address) {
++		return NULL;
++	}
++	struct a01gpu_host *host = IONewZero(struct a01gpu_host, 1);
++	if (!host) return NULL;
++	host->size = length;
++	host->md = IOMemoryDescriptor::withAddressRange(address, length,
++	    kIODirectionInOut | kIOMemoryPersistent, current_task());
++	if (!host->md) {
++		IODelete(host, struct a01gpu_host, 1);
++		return NULL;
++	}
++	if (host->md->prepare() != kIOReturnSuccess) {
++		OSSafeReleaseNULL(host->md);
++		IODelete(host, struct a01gpu_host, 1);
++		return NULL;
++	}
++	/* Check every 4 KiB mapping, including each full last page. */
++	for (uint64_t off = 0; off < length; off += gpu_page) {
++		IOByteCount span = 0;
++		uint64_t phys = host->md->getPhysicalSegment(off, &span, kIOMemoryMapperNone);
++		if (!phys || (phys & (gpu_page - 1)) || span < gpu_page ||
++		    phys > 0x100000000ULL - gpu_page) {
++			a01gpu_host_unpin(host);
++			return NULL;
++		}
++	}
++	host->map = host->md->createMappingInTask(kernel_task, 0, kIOMapAnywhere);
++	if (!host->map) {
++		a01gpu_host_unpin(host);
++		return NULL;
++	}
++	return host;
++}
++
++extern "C" void
++a01gpu_host_unpin(struct a01gpu_host *host)
++{
++	if (!host) return;
++	OSSafeReleaseNULL(host->map);
++	if (host->md) { host->md->complete(); OSSafeReleaseNULL(host->md); }
++	IODelete(host, struct a01gpu_host, 1);
++}
++
++extern "C" uint64_t
++a01gpu_host_phys(struct a01gpu_host *host, uint64_t offset)
++{
++	if (!host || offset >= host->size) return 0;
++	IOByteCount span = 0;
++	return host->md->getPhysicalSegment(offset, &span, kIOMemoryMapperNone);
++}
++
++extern "C" void *a01gpu_host_kva(struct a01gpu_host *host)
++{ return host && host->map ? (void *)(uintptr_t)host->map->getAddress() : NULL; }
++extern "C" uint64_t a01gpu_host_size(struct a01gpu_host *host)
++{ return host ? host->size : 0; }
++
+ extern "C" {
+ int a01pvr_driver_init(void);
+ int a01pvr_open(void **ppvConnection);
