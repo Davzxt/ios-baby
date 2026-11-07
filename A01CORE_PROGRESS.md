@@ -474,3 +474,7 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 ### Host-import transport build and page-boundary correction - 2026-11-06
 - Vulkan run 42308950301 succeeded with the disabled transport compiled; it does not advertise or implement Vulkan host import. Kernel run 42308950303 attempt 1 failed before compilation and attempt 2 is running.
 - Tightened disabled host-PMR device-address callback to reject requests larger than the guaranteed 4 KiB physical span, unaligned offsets, and ranges extending beyond the pinned region. Local mocked PMR, pin and transport checks pass. Real GPU cache/lifetime tests and Vulkan integration are still required.
+
+### Host cache-maintenance foundation - 2026-11-06
+- Added an unexposed a01gpu_host_flush helper that bounds the requested mapped range and calls XNU flush_dcache. It is cache maintenance only: the caller must establish CPU/GPU ownership and wait for GPU completion. It has no user-client or Vulkan entry point and is not claimed coherent on device.
+- Mock host-pin harness validates valid and out-of-range flush calls; all three local mock tests pass. Kernel compilation and hardware cache behavior remain unverified. The driver still must not advertise host-coherent external memory on this basis.

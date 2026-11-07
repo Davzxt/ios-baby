@@ -1,7 +1,7 @@
 diff --git a/iokit/Kernel/arm/A01CoreGPU.cpp b/iokit/Kernel/arm/A01CoreGPU.cpp
 --- a/iokit/Kernel/arm/A01CoreGPU.cpp
 +++ b/iokit/Kernel/arm/A01CoreGPU.cpp
-@@ -24,8 +24,83 @@
+@@ -24,8 +24,96 @@
  #include <IOKit/IOBufferMemoryDescriptor.h>
  #include <kern/task.h>
  #include <kern/thread.h>
@@ -81,6 +81,19 @@ diff --git a/iokit/Kernel/arm/A01CoreGPU.cpp b/iokit/Kernel/arm/A01CoreGPU.cpp
 +{ return host && host->map ? (void *)(uintptr_t)host->map->getAddress() : NULL; }
 +extern "C" uint64_t a01gpu_host_size(struct a01gpu_host *host)
 +{ return host ? host->size : 0; }
++
++/* Cache maintenance is not a GPU fence: the caller must own this range and
++ * wait for GPU completion before calling it on GPU-written data. */
++extern "C" void flush_dcache(vm_offset_t address, unsigned count, int physical);
++extern "C" int a01gpu_host_flush(struct a01gpu_host *host, uint64_t offset, uint64_t length)
++{
++	if (!host || !host->map || !length || offset >= host->size ||
++	    length > host->size - offset || length > 0xffffffffULL) return 1;
++	uintptr_t base = (uintptr_t)host->map->getAddress();
++	if (base + offset < base || base + offset + length < base + offset) return 1;
++	flush_dcache((vm_offset_t)(base + offset), (unsigned)length, 0);
++	return 0;
++}
 +
  extern "C" {
  int a01pvr_driver_init(void);

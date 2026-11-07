@@ -10,4 +10,6 @@ void a01gpu_host_unpin(a01gpu_host *host);
 uint64_t a01gpu_host_phys(a01gpu_host *host, uint64_t offset);
 void *a01gpu_host_kva(a01gpu_host *host);
 uint64_t a01gpu_host_size(a01gpu_host *host);
+/* Cache maintenance only; caller must separately enforce CPU/GPU ownership. */
+int a01gpu_host_flush(a01gpu_host *host, uint64_t offset, uint64_t length);
 #endif

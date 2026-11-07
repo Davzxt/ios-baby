@@ -18,7 +18,12 @@ prefix = r'''
 #include <cassert>
 #include <cstddef>
 using IOByteCount = uint64_t;
+using vm_offset_t = uintptr_t;
 static int live_desc, prepared, live_maps, scenario;
+static unsigned flush_count;
+extern "C" void flush_dcache(vm_offset_t address, unsigned count, int physical) {
+  assert(address == 0x101000 && count == 0x1000 && physical == 0); ++flush_count;
+}
 static void *kernel_task;
 static void *current_task() { return (void *)1; }
 enum { kIODirectionInOut=1, kIOMemoryPersistent=2, kIOReturnSuccess=0,
@@ -65,6 +70,9 @@ int main() {
   assert(a01gpu_host_phys(host,0x1000)==0x20001000);
   assert(!a01gpu_host_phys(host,0x8000));
   assert(a01gpu_host_kva(host)==(void *)0x100000);
+  assert(a01gpu_host_flush(host,0x1000,0x1000)==0 && flush_count==1);
+  assert(a01gpu_host_flush(host,0x7000,0x1001)!=0 && flush_count==1);
+  assert(a01gpu_host_flush(host,0,0)!=0 && flush_count==1);
   a01gpu_host_unpin(host);
   assert(!live_desc && !prepared && !live_maps);
 }
