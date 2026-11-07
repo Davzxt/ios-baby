@@ -54,11 +54,12 @@ suffix = r'''
 int main(void) {
  PVRSRV_DEVICE_NODE device={0}; PMR *pmr=0; a01gpu_host host={0x4000,0x20000000,1};
  assert(a01pvr_create_host_pmr(&device,&host,0,&pmr)==0 && pmr);
- const PMR_IMPL_FUNCTAB *ops=table; uint64_t offsets[]={0,0x3fff,0x4000};
+ const PMR_IMPL_FUNCTAB *ops=table; uint64_t offsets[]={0,0x3000,0x3fff};
  int valid[]={1,1,1}; IMG_DEV_PHYADDR addresses[3]={{0}};
  assert(ops->pfnDevPhysAddr(&host,12,2,offsets,valid,addresses)==0);
- assert(addresses[0].uiAddr==0x20000000 && addresses[1].uiAddr==0x20003fff);
+ assert(addresses[0].uiAddr==0x20000000 && addresses[1].uiAddr==0x20003000);
  assert(ops->pfnDevPhysAddr(&host,12,3,offsets,valid,addresses)==1);
+ assert(ops->pfnDevPhysAddr(&host,13,1,offsets,valid,addresses)==1);
  void *ptr=0,*token=(void *)1;
  assert(ops->pfnAcquireKernelMappingData(&host,0x3fff,1,&ptr,&token,0)==0);
  assert(ptr==(void *)0x13fff && !token);

@@ -470,3 +470,7 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 ### Host import foundations: build and local tests - 2026-11-06
 - XNU run 42304772917 succeeded with patch 0348 required by CI, confirming compilation and link of page pinning, host-backed PMR and internal handle helper. None is exposed by an IOKit selector; this is not a device or GPU test.
 - Added host PMR and disabled user-space transport tests. Mocked g++/gcc tests pass for page/physical limits, cleanup, PMR address/mapping bounds and invalid transport replies. Added a01drm_import_host_disabled as a future selector-2 transport; the selector is absent and the Vulkan extension remains disabled. Actual cache synchronization, selector authorization, Vulkan host import and device validation remain unimplemented.
+
+### Host-import transport build and page-boundary correction - 2026-11-06
+- Vulkan run 42308950301 succeeded with the disabled transport compiled; it does not advertise or implement Vulkan host import. Kernel run 42308950303 attempt 1 failed before compilation and attempt 2 is running.
+- Tightened disabled host-PMR device-address callback to reject requests larger than the guaranteed 4 KiB physical span, unaligned offsets, and ranges extending beyond the pinned region. Local mocked PMR, pin and transport checks pass. Real GPU cache/lifetime tests and Vulkan integration are still required.

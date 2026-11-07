@@ -143,10 +143,15 @@ A01HostDevPhysAddr(PMR_IMPL_PRIVDATA p, IMG_UINT32 log2_page, IMG_UINT32 n,
     IMG_DEVMEM_OFFSET_T *offsets, IMG_BOOL *valid, IMG_DEV_PHYADDR *addresses)
 {
 	a01gpu_host *host = p;
-	(void)log2_page;
+	/* The import only guarantees contiguous physical runs of 4 KiB. */
+	if (log2_page > 12) return PVRSRV_ERROR_INVALID_PARAMS;
+	IMG_UINT64 length = a01gpu_host_size(host);
+	IMG_UINT64 page_size = 1ULL << log2_page;
 	for (IMG_UINT32 i = 0; i < n; i++) {
 		if (!valid[i]) continue;
-		if (offsets[i] >= a01gpu_host_size(host)) return PVRSRV_ERROR_INVALID_PARAMS;
+		if ((offsets[i] & (page_size - 1)) || offsets[i] >= length ||
+		    page_size > length - offsets[i])
+			return PVRSRV_ERROR_INVALID_PARAMS;
 		IMG_UINT64 phys = a01gpu_host_phys(host, offsets[i]);
 		if (!phys || phys >= 0x100000000ULL) return PVRSRV_ERROR_INVALID_PARAMS;
 		addresses[i].uiAddr = phys;
