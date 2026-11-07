@@ -460,3 +460,6 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 
 ### Host PMR handle foundation - 2026-11-06
 - Added an unexposed DDK helper that pins a current-task range, creates an A01 host PMR and registers it in the current connection handle table with PMRUnrefPMR release semantics; failure paths release the pin/PMR. No user-client selector calls it, so this cannot yet be invoked by applications. Cache maintenance, lifetime across GPU jobs, host pointer Vulkan entrypoints and actual device tests remain required. Source has not yet been compiled.
+
+### Host pin build failure and patch-context repair - 2026-11-06
+- XNU run 42302973448 failed: patch 0348 was skipped, leaving a01gpu_host_* unresolved at link. The actual source has kern/thread.h and pexpert/pexpert.h from earlier patches; the local reconstruction used for the previous check omitted them. Updated patch 0348 to match both includes; git apply --check passes against a reconstruction including them. The helper and host PMR are still not compiled or device-tested.

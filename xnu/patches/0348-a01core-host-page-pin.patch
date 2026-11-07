@@ -1,9 +1,11 @@
 diff --git a/iokit/Kernel/arm/A01CoreGPU.cpp b/iokit/Kernel/arm/A01CoreGPU.cpp
 --- a/iokit/Kernel/arm/A01CoreGPU.cpp
 +++ b/iokit/Kernel/arm/A01CoreGPU.cpp
-@@ -24,6 +24,81 @@
+@@ -24,8 +24,83 @@
  #include <IOKit/IOBufferMemoryDescriptor.h>
  #include <kern/task.h>
+ #include <kern/thread.h>
+ #include <pexpert/pexpert.h>
  
 +/* Foundation for importing caller memory. No user-client selector exposes
 + * this yet: PMR ownership, cache synchronization and Vulkan integration must
