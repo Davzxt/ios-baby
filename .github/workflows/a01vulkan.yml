@@ -17,6 +17,11 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+      - name: Check host-import foundations
+        run: |
+          python3 gpu/ddk-1.11/env/xnu/test_host_pin.py
+          python3 gpu/ddk-1.11/env/xnu/test_host_pmr.py
+          python3 gpu/a01vulkan/test_host_transport.py
       - name: Deps
         run: |
           brew install meson ninja bison pkg-config llvm spirv-llvm-translator spirv-tools libclc || true
