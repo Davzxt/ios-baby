@@ -457,3 +457,6 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 
 ### Host-backed PowerVR PMR foundation - 2026-11-06
 - Added an unexposed host-backed PMR factory to physmem_xnu.c. It translates validated host offsets into device physical addresses, bounds kernel mappings, and transfers pinned descriptor ownership to PMR finalization on success. No bridge or Vulkan capability calls it: cache maintenance, CPU/GPU synchronization, kernel build and device validation remain outstanding. A successful pin alone must not be interpreted as safe GPU use.
+
+### Host PMR handle foundation - 2026-11-06
+- Added an unexposed DDK helper that pins a current-task range, creates an A01 host PMR and registers it in the current connection handle table with PMRUnrefPMR release semantics; failure paths release the pin/PMR. No user-client selector calls it, so this cannot yet be invoked by applications. Cache maintenance, lifetime across GPU jobs, host pointer Vulkan entrypoints and actual device tests remain required. Source has not yet been compiled.

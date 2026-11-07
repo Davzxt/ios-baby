@@ -19,6 +19,8 @@
 #include "allocmem.h"
 #include "pvr_bridge.h"
 #include "a01pvr.h"
+#include "a01gpu_host.h"
+#include "pvrsrv_memallocflags.h"
 #include "process_stats.h"
 
 typedef struct {
@@ -28,6 +30,43 @@ typedef struct {
 
 static PVRSRV_DEVICE_NODE *gpsA01DevNode;
 static POS_LOCK ghA01MMapLock;
+
+/* Host import is intentionally not reachable from an IOKit selector yet.
+ * GPU/cache synchronization and Vulkan capability checks are prerequisites. */
+extern PVRSRV_ERROR a01pvr_create_host_pmr(PVRSRV_DEVICE_NODE *, a01gpu_host *,
+    PVRSRV_MEMALLOCFLAGS_T, PMR **);
+
+int
+a01pvr_import_host_disabled(void *connection, uint64_t address, uint64_t size,
+    uint64_t *handle_out)
+{
+	CONNECTION_DATA *conn = connection;
+	PMR *pmr = NULL;
+	IMG_HANDLE handle = NULL;
+	if (!conn || !handle_out) return (int)PVRSRV_ERROR_INVALID_PARAMS;
+	*handle_out = 0;
+	a01gpu_host *host = a01gpu_host_pin(address, size);
+	if (!host) return (int)PVRSRV_ERROR_INVALID_PARAMS;
+	PVRSRV_MEMALLOCFLAGS_T flags = PVRSRV_MEMALLOCFLAG_GPU_READABLE |
+	    PVRSRV_MEMALLOCFLAG_GPU_WRITEABLE | PVRSRV_MEMALLOCFLAG_CPU_READABLE |
+	    PVRSRV_MEMALLOCFLAG_CPU_WRITEABLE | PVRSRV_MEMALLOCFLAG_GPU_UNCACHED |
+	    PVRSRV_MEMALLOCFLAG_CPU_CACHED;
+	PVRSRV_ERROR e = a01pvr_create_host_pmr(OSGetDevData(conn), host, flags, &pmr);
+	if (e != PVRSRV_OK) { a01gpu_host_unpin(host); return (int)e; }
+	LockHandle(conn->psHandleBase);
+	e = PVRSRVAllocHandleUnlocked(conn->psHandleBase, &handle, pmr,
+	    PVRSRV_HANDLE_TYPE_PHYSMEM_PMR, PVRSRV_HANDLE_ALLOC_FLAG_MULTI,
+	    (PFN_HANDLE_RELEASE)&PMRUnrefPMR);
+	UnlockHandle(conn->psHandleBase);
+	if (e != PVRSRV_OK) {
+		LockHandle(KERNEL_HANDLE_BASE);
+		PMRUnrefPMR(pmr);
+		UnlockHandle(KERNEL_HANDLE_BASE);
+		return (int)e;
+	}
+	*handle_out = (uint64_t)(uintptr_t)handle;
+	return (int)PVRSRV_OK;
+}
 
 /* ---- osconnection_server.h ------------------------------------------------------------------ */
 PVRSRV_ERROR
