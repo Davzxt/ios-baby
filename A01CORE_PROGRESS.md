@@ -466,3 +466,7 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 
 ### Host pin local ownership tests - 2026-11-06
 - Added a mock-IOKit host harness that compiles the actual helper extracted from patch 0348 and checks invalid alignment/ranges, overflow, the 4 GiB physical-address limit, failure cleanup and successful release. Local g++ test passed. This does not validate real XNU page wiring, cache coherency or GPU operation.
+
+### Host import foundations: build and local tests - 2026-11-06
+- XNU run 42304772917 succeeded with patch 0348 required by CI, confirming compilation and link of page pinning, host-backed PMR and internal handle helper. None is exposed by an IOKit selector; this is not a device or GPU test.
+- Added host PMR and disabled user-space transport tests. Mocked g++/gcc tests pass for page/physical limits, cleanup, PMR address/mapping bounds and invalid transport replies. Added a01drm_import_host_disabled as a future selector-2 transport; the selector is absent and the Vulkan extension remains disabled. Actual cache synchronization, selector authorization, Vulkan host import and device validation remain unimplemented.

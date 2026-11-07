@@ -71,6 +71,29 @@ a01_connection(void)
 
 #define A01_NODEV (errno = ENODEV, -ENODEV)
 
+/* Host-import transport for a future opt-in kernel selector. The currently
+ * shipped kernel does not implement selector 2: this function is not called by
+ * the Vulkan driver and no host-import capability is advertised. The selector
+ * must remain disabled until cache synchronization and lifetime are verified. */
+int
+a01drm_import_host_disabled(void *address, uint64_t size, uint64_t *pmr)
+{
+	uint64_t base = (uint64_t)(uintptr_t)address;
+	if (!pmr) return -EINVAL;
+	*pmr = 0;
+	if (!base || !size || (base & 0x3fffULL) || (size & 0x3fffULL) ||
+	    size > 0x08000000ULL || base + size < base) return -EINVAL;
+	io_connect_t conn = a01_connection();
+	if (conn == IO_OBJECT_NULL) return -ENODEV;
+	uint64_t in[2] = { base, size }, out[2] = { 0, 0 };
+	uint32_t out_count = 2;
+	kern_return_t kr = IOConnectCallScalarMethod(conn, 2, in, 2, out, &out_count);
+	if (kr != KERN_SUCCESS || out_count != 2) return -ENOTSUP;
+	if (out[0] || !out[1]) return -EINVAL;
+	*pmr = out[1];
+	return 0;
+}
+
 /* Diagnostics: the last bridge calls and PMR maps, printed by a01metal-test when it crashes or
  * hangs (a01drm_trace_dump). Plain counters, no locking: good enough for a post-mortem. */
 #define A01_TRACE_N 6
