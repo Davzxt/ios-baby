@@ -463,3 +463,6 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 
 ### Host pin build failure and patch-context repair - 2026-11-06
 - XNU run 42302973448 failed: patch 0348 was skipped, leaving a01gpu_host_* unresolved at link. The actual source has kern/thread.h and pexpert/pexpert.h from earlier patches; the local reconstruction used for the previous check omitted them. Updated patch 0348 to match both includes; git apply --check passes against a reconstruction including them. The helper and host PMR are still not compiled or device-tested.
+
+### Host pin local ownership tests - 2026-11-06
+- Added a mock-IOKit host harness that compiles the actual helper extracted from patch 0348 and checks invalid alignment/ranges, overflow, the 4 GiB physical-address limit, failure cleanup and successful release. Local g++ test passed. This does not validate real XNU page wiring, cache coherency or GPU operation.
