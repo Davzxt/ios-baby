@@ -371,7 +371,8 @@ run(int linear, int uvmode, uint8_t px[4][4], char *why, size_t n)
 	vkQueueWaitIdle_(queue);
 	usleep(300000);   /* the fences cap at 2 s; give the copy time to land as A01Metal does */
 
-	static const int at[4][2] = { { 16, 16 }, { 48, 16 }, { 16, 48 }, { 48, 48 } };
+	/* inside 16x16 tiles (tile-local 8): tile corners hid per-tile constant interpolation */
+	static const int at[4][2] = { { 24, 24 }, { 40, 24 }, { 24, 40 }, { 40, 40 } };
 	uint8_t *direct = NULL;
 	VkImageSubresource tsr = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0 };
 	VkSubresourceLayout tlay;
@@ -393,7 +394,8 @@ run(int linear, int uvmode, uint8_t px[4][4], char *why, size_t n)
 			ok &= abs(px[i][0] - 128) <= 3 && abs(px[i][1] - 64) <= 3 && px[i][2] == 0 && px[i][3] == 255;
 		} else if (uvmode) {
 			/* halved: pixel centre / 128: (16.5/128)*255 = 33 (0x21), (48.5/128)*255 = 97 (0x61) */
-			int ex = at[i][0] > 32 ? 97 : 33, ey = at[i][1] > 32 ? 97 : 33;
+			/* pixel centre / 128: (24.5/128)*255 = 49 (0x31), (40.5/128)*255 = 81 (0x51) */
+			int ex = at[i][0] > 32 ? 81 : 49, ey = at[i][1] > 32 ? 81 : 49;
 			if (uvmode == 5) ey = 0;
 			if (uvmode == 6) ex = 0;
 			ok &= abs(px[i][0] - ex) <= 3 && abs(px[i][1] - ey) <= 3 && px[i][2] == 0 && px[i][3] == 255;
