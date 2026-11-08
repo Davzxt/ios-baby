@@ -44,18 +44,15 @@ rep("""   /* Skip cases that don't need handling. */
 """, """   /* Skip cases that don't need handling. */
    bool a01_alu = false, a01_posxy = false;
 #if defined(__APPLE__)
-   /* A01: the hardware iterators are used again for ordinary varyings. The measurements that
-    * suggested they were broken were read back through the TQ copy, which itself sampled at the
-    * wrong position (X_P/Y_P count half pixels); the later "coordinates zero" result matched only
-    * because every sample point sat on a 16x16 tile corner, and drew 16x16 blocks on the UI.
-    * A01_PVR_ALU_ITER=1 keeps the ALU interpolation for experiments. gl_FragCoord.xy always comes
+   /* A01: varyings are interpolated by ALU from the coefficient registers (the package that removed
+    * the blue UI). A01_PVR_HW_ITER=1 uses the hardware iterators instead. gl_FragCoord.xy always comes
     * from X_P/Y_P x 0.5 below (that fixed the TQ copy and V6). */
    {
       bool a01_pix = bary->intrinsic == nir_intrinsic_load_barycentric_pixel ||
                      bary->intrinsic == nir_intrinsic_load_barycentric_centroid ||
                      bary->intrinsic == nir_intrinsic_load_barycentric_sample;
-      const char *a01_a = getenv("A01_PVR_ALU_ITER");
-      a01_alu = a01_pix && a01_a && a01_a[0] == '1';
+      const char *a01_h = getenv("A01_PVR_HW_ITER");
+      a01_alu = a01_pix && !(a01_h && a01_h[0] == '1');
       a01_posxy = a01_pix && nir_intrinsic_io_semantics(intr).location == VARYING_SLOT_POS &&
                   nir_intrinsic_component(intr) + intr->def.num_components <= 2;
    }
@@ -106,8 +103,14 @@ rep("""   /* Skip cases that don't need handling. */
          coords = nir_fmul_imm(b, coords, 0.0f);
       else if (a01_old && a01_old[0] == '1')
          coords = nir_fmul_imm(b, coords, 2.0f / 3.0f);
-      else if (!(a01_s && a01_s[0] == '1'))
-         coords = nir_fmul_imm(b, coords, 0.0f);
+      else if (!(a01_s && a01_s[0] == '1')) {
+         /* The coefficient C holds the value at this pixel's 16x16 tile corner: with the coordinates
+          * zeroed (A01_PVR_ITER_ZERO=1) the UI lost its blue but every tile drew one value (blocky,
+          * textures missing; the test points all sat on tile corners). Add the gradients over the
+          * position inside the tile: x mod 16, y mod 16. */
+         nir_def *a01_tile = nir_fmul_imm(b, nir_ffloor(b, nir_fmul_imm(b, coords, 1.0f / 16.0f)), 16.0f);
+         coords = nir_fsub(b, coords, a01_tile);
+      }
    }
  #endif
 
