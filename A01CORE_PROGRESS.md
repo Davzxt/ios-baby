@@ -478,3 +478,8 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 ### Host cache-maintenance foundation - 2026-11-06
 - Added an unexposed a01gpu_host_flush helper that bounds the requested mapped range and calls XNU flush_dcache. It is cache maintenance only: the caller must establish CPU/GPU ownership and wait for GPU completion. It has no user-client or Vulkan entry point and is not claimed coherent on device.
 - Mock host-pin harness validates valid and out-of-range flush calls; all three local mock tests pass. Kernel compilation and hardware cache behavior remain unverified. The driver still must not advertise host-coherent external memory on this basis.
+
+### Hardware iterators restored - 2026-11-08
+- Re-read the evidence: the iterator measurements up to 2026-11-03 were read back through the TQ copy, which sampled at the wrong position until the X_P/Y_P half-pixel fix. The later V9 "coordinates zero" result matched only because every sample point (16/48) sat on a 16x16 tile corner; applied to the UI it gives one value per tile (16x16 blocks, the reported pixelation and missing textures).
+- 0a99b70: ordinary varyings use the hardware iterators again (A01_PVR_ALU_ITER=1 keeps ALU interpolation); gl_FragCoord.xy stays X_P/Y_P x 0.5. a01vktex samples inside tiles (24/40; V3 expected 3131 5151).
+- Vulkan 42506492898 (artifact 13628340095), Metal 42506492863 (artifact 13627438360); reused kernel (11-04, touch patches) and a01gl without flip. Package a01-package-work/AP_IOS16_BOOT_GPU_DIAG_3CPU_INTERP_0A99B70.tar.md5, boot.img md5 4aec875cbf5556980b6e52a018d4c6c1. Untested on the phone.
