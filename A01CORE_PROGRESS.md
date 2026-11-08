@@ -483,3 +483,8 @@ staged HFS sources, as in CI). Keep observations from the phone, local builds an
 - Re-read the evidence: the iterator measurements up to 2026-11-03 were read back through the TQ copy, which sampled at the wrong position until the X_P/Y_P half-pixel fix. The later V9 "coordinates zero" result matched only because every sample point (16/48) sat on a 16x16 tile corner; applied to the UI it gives one value per tile (16x16 blocks, the reported pixelation and missing textures).
 - 0a99b70: ordinary varyings use the hardware iterators again (A01_PVR_ALU_ITER=1 keeps ALU interpolation); gl_FragCoord.xy stays X_P/Y_P x 0.5. a01vktex samples inside tiles (24/40; V3 expected 3131 5151).
 - Vulkan 42506492898 (artifact 13628340095), Metal 42506492863 (artifact 13627438360); reused kernel (11-04, touch patches) and a01gl without flip. Package a01-package-work/AP_IOS16_BOOT_GPU_DIAG_3CPU_INTERP_0A99B70.tar.md5, boot.img md5 4aec875cbf5556980b6e52a018d4c6c1. Untested on the phone.
+
+### ALU interpolation kept, gradients inside the tile - 2026-11-08
+- User: the blue UI was already solved by the earlier ChatGPT package (ALU interpolation with coordinates zeroed); INTERP_0A99B70 (hardware iterators) must not be used.
+- 35fc9ba keeps that path and adds the gradients over the position inside the 16x16 tile (x mod 16, y mod 16), since C holds the tile-corner value. A01_PVR_ITER_ZERO=1 restores the zeroed coordinates.
+- Vulkan 42516307018 (artifact 13631297877); Metal 42506492863 (samples inside tiles, V3 expected 3131 5151); same kernel and a01gl. Package a01-package-work/AP_IOS16_BOOT_GPU_DIAG_3CPU_TILE_35FC9BA.tar.md5, boot.img md5 6b0edc8cf198cb8836f1fb0b57f685b4. Untested on the phone.
