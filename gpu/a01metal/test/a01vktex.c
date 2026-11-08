@@ -409,25 +409,28 @@ run(int linear, int uvmode, uint8_t px[4][4], char *why, size_t n)
 /* one "A01 >>> Vn ..." line per variant through emit() as soon as it is done (a hang or crash in a later
  * variant keeps the earlier lines); step(v) before each so the watchdog names the variant */
 void
-a01_vk_tex_test(void (*emit)(const char *), void (*step)(int), char marks[9])
+a01_vk_tex_test(void (*emit)(const char *), void (*step)(int), char marks[10])
 {
 	char out[300];
 	size_t n = sizeof(out);
 	char why[96] = "";
-	memset(marks, '-', 9);
+	memset(marks, '-', 10);
 	if (!init(why, sizeof(why))) {
 		snprintf(out, n, "A01 >>> VT: Vulkan nao iniciou (%s) <<<\n", why);
 		emit(out);
 		return;
 	}
-	for (int v = 0; v < 9; v++) {
+	for (int v = 0; v < 10; v++) {
 		uint8_t px[4][4];
 		memset(px, 0, sizeof(px));
 		why[0] = '\0';
 		step(v);
 		if (v == 8) setenv("A01_PVR_ITER_ZERO", "1", 1);
-		int ok = run(v == 1, v == 8 ? 1 : v >= 2 ? v - 1 : 0, px, why, sizeof(why));
+		/* V10: the V3 shader with the hardware iterators (what the a04br3 GE8300 port uses unchanged) */
+		if (v == 9) setenv("A01_PVR_HW_ITER", "1", 1);
+		int ok = run(v == 1, (v == 8 || v == 9) ? 1 : v >= 2 ? v - 1 : 0, px, why, sizeof(why));
 		if (v == 8) unsetenv("A01_PVR_ITER_ZERO");
+		if (v == 9) unsetenv("A01_PVR_HW_ITER");
 		marks[v] = ok ? '+' : '-';
 		snprintf(out, n,
 		                 "A01 >>> V%d (%s): %s %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x%s%s <<<\n", v + 1,

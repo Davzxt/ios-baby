@@ -37,7 +37,9 @@ static char g_log[1400];
 /* GL summary for the kernel status block (first line of autorun.out, between quotes): one mark
  * per test GL1-GL7, + right, - wrong, ? running, . not run */
 static char g_gl_sum[11] = "..........";   /* GL1-GL7, then V1 V2 V3 (a01vktex.c) */
-void a01_vk_tex_test(void (*emit)(const char *), void (*step)(int), char marks[9]);
+void a01_vk_tex_test(void (*emit)(const char *), void (*step)(int), char marks[10]);
+/* red bytes of V3 (tile ALU) and V10 (hardware iterators) at (24,24) and (40,40): expected 3151 */
+static char g_tr[8] = "?", g_hr[8] = "?";
 /* V3's first and last pixel, for the kernel status block (the V lines scroll away) */
 static char g_v3[40] = "";
 static char g_gl2_pixel = '?';
@@ -531,12 +533,18 @@ vt_emit(const char *s)
 	int vn = strncmp(s, "A01 >>> V3 ", 11) == 0 ? 3 :
 	         strncmp(s, "A01 >>> V7 ", 11) == 0 ? 7 :
 	         strncmp(s, "A01 >>> V8 ", 11) == 0 ? 8 :
-	         strncmp(s, "A01 >>> V9 ", 11) == 0 ? 9 : 0;
+	         strncmp(s, "A01 >>> V9 ", 11) == 0 ? 9 :
+	         strncmp(s, "A01 >>> V10 ", 12) == 0 ? 10 : 0;
 	if (vn) {
 		const char *r = strstr(s, "): ");
 		char p[4][9];
 		if (r && sscanf(r + 3, "%*s %8s %8s %8s %8s", p[0], p[1], p[2], p[3]) == 4) {
-			if (vn == 3) {
+			if (vn == 3 || vn == 10) {
+				snprintf(vn == 3 ? g_tr : g_hr, sizeof(g_tr), "%.2s%.2s", p[0], p[3]);
+			}
+			if (vn == 10) {
+				/* nothing else to keep */
+			} else if (vn == 3) {
 				p[0][4] = p[1][4] = p[2][4] = '\0';
 				snprintf(g_v3s, sizeof(g_v3s), "%s %s %s", p[0], p[1], p[2]);
 			} else if (vn == 7) {
@@ -554,8 +562,9 @@ vt_emit(const char *s)
 static void
 vt_step(int v)
 {
-	static const char *const names[9] = { "GL V1 textura copia", "GL V2 textura linear", "GL V3 coordenada",
-	                                      "GL V4 constante", "GL V5 constante flat", "GL V6 posicao", "GL V7 eixo X", "GL V8 eixo Y", "GL V9 coeficiente" };
+	static const char *const names[10] = { "GL V1 textura copia", "GL V2 textura linear", "GL V3 coordenada",
+	                                      "GL V4 constante", "GL V5 constante flat", "GL V6 posicao", "GL V7 eixo X", "GL V8 eixo Y", "GL V9 coeficiente",
+	                                      "GL V10 iterador hardware" };
 	A01MTLStep = names[v];
 }
 
@@ -825,7 +834,8 @@ gl_zink_test(void)
 		}
 		gl_px(a, sizeof(a), px[0]); gl_px(b, sizeof(b), px[1]); gl_px(c, sizeof(c), px[2]); gl_px(d, sizeof(d), px[3]);
 		if (tl == 0) {
-			snprintf(g_v3, sizeof(g_v3), "5%c%c%c%c F%s U%s D%s K%c", gl_colour(px[0]), gl_colour(px[1]), gl_colour(px[2]), gl_colour(px[3]), g_gl_flip, g_gl_const4, g_gl_dir, g_gl_clear);
+			/* T/H: interpolated coordinate, current tile ALU path vs hardware iterators (3151 = right) */
+			snprintf(g_v3, sizeof(g_v3), "5%c%c%c%c U%s T%s H%s", gl_colour(px[0]), gl_colour(px[1]), gl_colour(px[2]), gl_colour(px[3]), g_gl_const4, g_tr, g_hr);
 		}
 		report("A01 >>> %.3s: %s erradas %u/%u, ultimo %s %s %s %s <<<\n", names[tl], bad_rounds ? "ERRO" : "OK",
 		       bad_rounds, rounds, a, b, c, d);
@@ -1173,7 +1183,7 @@ int main(int argc, char **argv)
 			/* texture sampling straight on Vulkan, without Zink: V1 GPU copy upload, V2 CPU-written linear */
 			STEP("GL V textura direto no Vulkan");
 			g_gl_sum[7] = g_gl_sum[8] = g_gl_sum[9] = '?';
-			char marks[9];
+			char marks[10];
 			a01_vk_tex_test(vt_emit, vt_step, marks);
 			g_gl_sum[7] = marks[0];
 			g_gl_sum[8] = marks[1];
