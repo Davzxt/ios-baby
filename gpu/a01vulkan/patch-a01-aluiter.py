@@ -108,7 +108,12 @@ rep("""   /* Skip cases that don't need handling. */
           * zeroed (A01_PVR_ITER_ZERO=1) the UI lost its blue but every tile drew one value (blocky,
           * textures missing; the test points all sat on tile corners). Add the gradients over the
           * position inside the tile: x mod 16, y mod 16. */
-         nir_def *a01_tile = nir_fmul_imm(b, nir_ffloor(b, nir_fmul_imm(b, coords, 1.0f / 16.0f)), 16.0f);
+         /* Units: the coefficients are per X_P/Y_P unit (half a pixel), not per pixel. Phone, same
+          * shader: raw X_P added 0x21 at pixel 16 and 0x60 at pixel 48 (the full value), X_P x 0.5
+          * added half of it; with x0.5 mod 16 the gradient inside each tile was half (deformed UI,
+          * V3 wrong inside tiles). So: raw X_P/Y_P modulo the 32-unit tile. */
+         coords = nir_fmul_imm(b, coords, 2.0f);
+         nir_def *a01_tile = nir_fmul_imm(b, nir_ffloor(b, nir_fmul_imm(b, coords, 1.0f / 32.0f)), 32.0f);
          coords = nir_fsub(b, coords, a01_tile);
       }
    }
