@@ -1,0 +1,139 @@
+From 0d4e27ea6e87dfeee3edb228e5786a43492435fa Mon Sep 17 00:00:00 2001
+From: a01core <a01core@localhost>
+Date: Mon, 9 Nov 2026 21:30:46 -0300
+Subject: [PATCH] 0349 a01core touch: TouchComm (TD4150) first in SPI mode 0,
+ Novatek probe only as fallback; TouchComm state on the status line
+
+---
+ bsd/dev/a01core_touch.c | 49 ++++++++++++++++++++++++++++++++++++-----
+ 1 file changed, 44 insertions(+), 5 deletions(-)
+
+diff --git a/bsd/dev/a01core_touch.c b/bsd/dev/a01core_touch.c
+index a87aac5..1b555cf 100644
+--- a/bsd/dev/a01core_touch.c
++++ b/bsd/dev/a01core_touch.c
+@@ -313,6 +313,10 @@ spi_xfer(const uint8_t *tx, uint8_t *rx, uint32_t len)
+ 
+ /* ---- TCM messages --------------------------------------------------------- */
+ /* Reads one message. *code = status/report code, payload (up to msg_cap) in msg[]. */
++/* 0349: TouchComm (TD4150) state for the status line: 0 not tried, 1 detecting, 2 no answer,
++ * 3 identified, 4 firmware/config, 5 ready, 6 gave up; and the last message header read. */
++static volatile uint32_t tcm_diag_state, tcm_diag_hdr, tcm_diag_touches;
++
+ static int
+ tcm_read(uint8_t *code, uint32_t *len)
+ {
+@@ -321,6 +325,7 @@ tcm_read(uint8_t *code, uint32_t *len)
+ 	if (error) {
+ 		return error;
+ 	}
++	tcm_diag_hdr = (uint32_t)hdr[0] << 24 | (uint32_t)hdr[1] << 16 | (uint32_t)hdr[2] << 8 | hdr[3];
+ 	if (hdr[0] != MSG_MARKER) {
+ 		return ENXIO;
+ 	}
+@@ -539,6 +544,7 @@ static void
+ report_touch(uint32_t len)
+ {
+ 	uint16_t down = 0;
++	tcm_diag_touches++;
+ 	for (uint32_t o = 0; o + OBJ_BYTES <= len; o += OBJ_BYTES) {
+ 		uint32_t idx = msg[o], cls = msg[o + 1];
+ 		int x = (int)le16(&msg[o + 2]), y = (int)le16(&msg[o + 4]);
+@@ -696,8 +702,9 @@ static volatile uint32_t nvt_diag_state, nvt_diag_id_hi, nvt_diag_id_lo, nvt_dia
+ void a01core_touch_status(void);
+ void a01core_touch_status(void)
+ {
+-    printf("A01 >>> TOQUE: S%u ID%08x%04x I%u <<<\n", nvt_diag_state,
+-        nvt_diag_id_hi, nvt_diag_id_lo, nvt_diag_ies);
++    /* T = TouchComm/TD4150 state, H = its last header, N = touches reported; S/ID = Novatek */
++    printf("A01 >>> TOQUE: T%u H%08x N%u S%u ID%08x%04x I%u <<<\n", tcm_diag_state, tcm_diag_hdr,
++        tcm_diag_touches, nvt_diag_state, nvt_diag_id_hi, nvt_diag_id_lo, nvt_diag_ies);
+ }
+ static uint8_t *nvt_tx, *nvt_rx;
+ static const uint8_t *nvt_fw;
+@@ -1065,21 +1072,49 @@ nvt_run(void)
+ 	}
+ }
+ 
++static void tcm_run(void);
++
++/* 0349: the TD4150 (TouchComm) is the main panel variant and its driver came up on this phone
++ * before the Novatek probe existed. Since 0336/0340 the Novatek probe ran first: it wrote Novatek
++ * reset commands to whatever chip is there and left the bus at 1 MHz in SPI mode 3, so the
++ * TouchComm path that followed could not work. TouchComm now runs first, in mode 0 at the
++ * configured clock; the Novatek probe only when TouchComm finds nothing, and the bus settings
++ * are restored after it. */
+ static void
+ touch_thread(__unused void *arg, __unused wait_result_t wres)
+ {
+-	int failures = 0;
++	const uint32_t hz0 = t_hz;
+ 	t_msleep(1500);
+-	nvt_run();             /* Novatek NT36525B panel: never returns */
+-	msg = kalloc_data(msg_cap, Z_WAITOK | Z_ZERO);
++	for (unsigned round = 0;; round++) {
++		t_hz = hz0;
++		t_mode3 = 0;
++		spi_hw_setup();
++		tcm_run();             /* returns only when TouchComm gives up */
++		if (round == 0) {
++			nvt_run();         /* Novatek NT36525B panel: returns when its id is not found */
++		}
++		t_msleep(5000);        /* then keep trying TouchComm (chip may still be starting) */
++	}
++}
++
++static void
++tcm_run(void)
++{
++	int failures = 0;
++	tcm_diag_state = 1;
++	if (!msg) {
++		msg = kalloc_data(msg_cap, Z_WAITOK | Z_ZERO);
++	}
+ 	if (!msg || fw_find() != 0) {
+ 		LOG("touch disabled");
++		tcm_diag_state = 6;
+ 		return;
+ 	}
+ 	t_state = S_DETECT;
+ 	for (;;) {
+ 		if (failures > 8) {
+ 			LOG("giving up after repeated failures (boot-arg a01touch=2 for details)");
++			tcm_diag_state = tcm_diag_state == 2 ? 2 : 6;
+ 			return;
+ 		}
+ 		switch (t_state) {
+@@ -1090,11 +1125,13 @@ touch_thread(__unused void *arg, __unused wait_result_t wres)
+ 			if (error == ENXIO) {
+ 				LOG("no TouchComm device on SPI0 CS0 (panel variant NT36525B is not supported, "
+ 				    "or SPI not working)");
++				tcm_diag_state = 2;
+ 				failures += 3;
+ 				t_msleep(500);
+ 				break;
+ 			}
+ 			if (!error && code == RPT_IDENTIFY) {
++				tcm_diag_state = 3;
+ 				take_identify(n);
+ 				t_state = id_mode == MODE_ROMBOOT ? S_ROMBOOT : S_APP;
+ 			} else if (!error && code >= RPT_IDENTIFY) {
+@@ -1116,6 +1153,7 @@ touch_thread(__unused void *arg, __unused wait_result_t wres)
+ 			break;
+ 		}
+ 		case S_ROMBOOT:
++			tcm_diag_state = 4;
+ 			if (romboot_download() != 0) {
+ 				failures++;
+ 				t_state = S_DETECT;
+@@ -1157,6 +1195,7 @@ touch_thread(__unused void *arg, __unused wait_result_t wres)
+ 				t_msleep(200);
+ 			} else {
+ 				LOG("ready");
++				tcm_diag_state = 5;
+ 				failures = 0;
+ 			}
+ 			break;
+-- 
+2.55.0.windows.5
+
